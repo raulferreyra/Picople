@@ -1,19 +1,18 @@
-from __future__ import annotations
-
+# src/picople/app/main.py
 import sys
 from PySide6.QtWidgets import QApplication
-
+from PySide6.QtCore import QCoreApplication
 from picople.app.main_window import MainWindow
 
 
-def main() -> None:
+def main():
+    QCoreApplication.setOrganizationName("Picople")
+    QCoreApplication.setOrganizationDomain("picople.local")
+    QCoreApplication.setApplicationName("Picople")
+
     app = QApplication(sys.argv)
-    app.setApplicationName("Picople")
-
-    # Tema por defecto: oscuro (se puede persistir con QSettings en un hito próximo)
-    window = MainWindow(start_dark=True)
-    window.show()
-
+    win = MainWindow()
+    win.show()
     sys.exit(app.exec())
 
 
