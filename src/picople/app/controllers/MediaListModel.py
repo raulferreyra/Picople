@@ -1,4 +1,3 @@
-# src/picople/app/controllers/MediaListModel.py
 from __future__ import annotations
 from typing import List, Dict, Any
 from pathlib import Path
@@ -6,10 +5,11 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QAbstractListModel, QModelIndex
 from PySide6.QtGui import QIcon
 
+ROLE_KIND = Qt.UserRole + 1  # usado por el delegate
+
 
 class MediaListModel(QAbstractListModel):
     """
-    Modelo simple para QListView en modo iconos.
     items: lista de dicts con claves:
       - path (str)
       - kind ("image"|"video")
@@ -23,7 +23,7 @@ class MediaListModel(QAbstractListModel):
         self.items: List[Dict[str, Any]] = []
         self.tile_size = int(tile_size)
 
-        # Fallbacks opcionales
+        # Fallbacks opcionales (si el sistema/tema los ofrece)
         self._icon_image = QIcon.fromTheme("image-x-generic")
         self._icon_video = QIcon.fromTheme("video-x-generic")
 
@@ -44,7 +44,6 @@ class MediaListModel(QAbstractListModel):
 
     def set_tile_size(self, size: int) -> None:
         self.tile_size = int(size)
-        # El delegate/CollectionView recalculan gridSize e iconSize
 
     # ---- Requeridos ----
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
@@ -59,15 +58,18 @@ class MediaListModel(QAbstractListModel):
 
         it = self.items[row]
 
+        if role == ROLE_KIND:
+            return it.get("kind")
+
         if role == Qt.DisplayRole:
-            # Devuelve texto si quieres (el delegate puede ocultarlo con text_lines=0)
+            # El delegate puede ocultarlo (text_lines=0)
             return it.get("path", "")
 
         if role == Qt.DecorationRole:
             tp = it.get("thumb_path")
             if tp and Path(tp).exists():
-                return QIcon(str(tp))   # miniatura lista
-            # fallback opcional por tipo
+                return QIcon(str(tp))
+            # fallback por tipo
             kind = it.get("kind")
             if kind == "video" and self._icon_video and not self._icon_video.isNull():
                 return self._icon_video

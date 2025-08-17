@@ -1,7 +1,8 @@
 from __future__ import annotations
-from PySide6.QtCore import Qt, QRect, QSize
-from PySide6.QtGui import QPainter, QFontMetrics, QIcon, QPixmap
+from PySide6.QtCore import Qt, QRect, QSize, QPoint
+from PySide6.QtGui import QPainter, QFontMetrics, QIcon, QPixmap, QColor, QPainterPath
 from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QWidget, QStyle
+ROLE_KIND = Qt.UserRole + 1
 
 
 class ThumbDelegate(QStyledItemDelegate):
@@ -24,6 +25,34 @@ class ThumbDelegate(QStyledItemDelegate):
         return QSize(w, h)
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
+        kind = index.data(ROLE_KIND)
+        if kind == "video":
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            r = 14  # radio del círculo
+            cx = icon_rect.right() - r - 6
+            cy = icon_rect.bottom() - r - 6
+
+            # círculo semitransparente
+            painter.save()
+            painter.setBrush(QColor(0, 0, 0, 160))
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(QPoint(cx, cy), r, r)
+
+            # triángulo blanco
+            path = QPainterPath()
+            tri = [
+                QPoint(cx - 4, cy - 6),
+                QPoint(cx - 4, cy + 6),
+                QPoint(cx + 6, cy)
+            ]
+            path.moveTo(tri[0])
+            path.lineTo(tri[1])
+            path.lineTo(tri[2])
+            path.closeSubpath()
+            painter.setBrush(QColor(255, 255, 255))
+            painter.drawPath(path)
+            painter.restore()
+
         painter.save()
 
         # Fondo selección (usar QStyle.State_Selected)
