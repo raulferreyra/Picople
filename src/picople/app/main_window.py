@@ -1,34 +1,18 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# File: src/picople/app/main_window.py
-# ─────────────────────────────────────────────────────────────────────────────
+# src/picople/app/main_window.py
 from __future__ import annotations
-
 from typing import List, Tuple
 
 from PySide6.QtCore import Qt, QTimer, QSize, QSettings
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QFrame,
-    QPushButton,
-    QLabel,
-    QLineEdit,
-    QToolBar,
-    QStatusBar,
-    QProgressBar,
-    QMessageBox,
-    QStyle,
-    QToolButton,
-    QStackedWidget,
-    QSizePolicy,
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFrame, QPushButton, QLabel,
+    QLineEdit, QToolBar, QStatusBar, QProgressBar, QMessageBox, QStyle,
+    QToolButton, QStackedWidget, QSizePolicy
 )
 
 from picople.core.theme import QSS_DARK, QSS_LIGHT
 from picople.app import views
-
+from picople.core.config import get_root_dirs
 
 SECTIONS = [
     ("collection", "Colección"),
@@ -47,14 +31,14 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
         self.setWindowIcon(self.style().standardIcon(QStyle.SP_ComputerIcon))
 
-        # Estado persistente (tema, geometría, última sección)
+        # Estado persistente
         self.settings = QSettings()
         self.dark_mode = (self.settings.value("ui/theme", "dark") == "dark")
 
         self._build_ui()
         self._apply_theme()
 
-        # Restaurar geometría/estado de ventana
+        # Restaurar geometría/estado
         geom = self.settings.value("ui/geometry")
         if geom is not None:
             self.restoreGeometry(geom)
@@ -62,11 +46,15 @@ class MainWindow(QMainWindow):
         if state is not None:
             self.restoreState(state)
 
-        # Navegar a la última sección (o colección por defecto)
+        # Navegar a última sección o Colección
         last = self.settings.value("ui/last_section", "collection")
-        self._navigate(last if last in self.pages else "collection")
+        self._navigate(last if last in self._pages else "collection")
 
-    # --------------------------- UI Builders --------------------------- #
+        # Primer arranque: si no hay carpetas
+        if not get_root_dirs():
+            QTimer.singleShot(400, self._first_run_prompt)
+
+    # --------------------------- UI --------------------------- #
     def _build_ui(self) -> None:
         root = QWidget()
         self.setCentralWidget(root)
@@ -88,25 +76,24 @@ class MainWindow(QMainWindow):
             "font-size: 18px; font-weight: 700; padding: 8px 10px;")
         side_layout.addWidget(title)
 
-        # Botones del menú (con IDs para QSS)
         self.nav_buttons: dict[str, QPushButton] = {}
         for key, text in SECTIONS:
             btn = QPushButton(text)
-            btn.setObjectName("NavButton")           # <- coincide con QSS
+            btn.setObjectName("NavButton")
             btn.setCheckable(True)
             btn.setAutoExclusive(True)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setIcon(self._icon_for_key(key))
             btn.setIconSize(QSize(18, 18))
-            btn.clicked.connect(lambda _checked, k=key: self._navigate(k))
+            btn.clicked.connect(lambda _c, k=key: self._navigate(k))
             self.nav_buttons[key] = btn
             side_layout.addWidget(btn)
 
         side_layout.addStretch(1)
 
-        # Área central: router de páginas
+        # Centro: páginas
         self.stack = QStackedWidget()
-        self.pages = {
+        self._pages = {
             "collection": views.CollectionView(),
             "favorites":  views.FavoritesView(),
             "albums":     views.AlbumsView(),
@@ -115,16 +102,16 @@ class MainWindow(QMainWindow):
             "folders":    views.FoldersView(),
             "search":     views.SearchView(),
         }
-        for key in self.pages:
-            self.stack.addWidget(self.pages[key])
+        for key in self._pages:
+            self.stack.addWidget(self._pages[key])
 
-        # Toolbar (top)
+        # Toolbar
         self.toolbar = QToolBar()
         self.toolbar.setMovable(False)
         self.addToolBar(Qt.TopToolBarArea, self.toolbar)
 
         self.search_edit = QLineEdit()
-        self.search_edit.setObjectName("SearchEdit")  # <- coincide con QSS
+        self.search_edit.setObjectName("SearchEdit")
         self.search_edit.setPlaceholderText("Buscar… (texto, nombre o cosa)")
         self.search_edit.setFixedWidth(380)
 
@@ -138,7 +125,6 @@ class MainWindow(QMainWindow):
         self.btn_update.setText("Actualizar")
         self.btn_update.clicked.connect(self._on_update)
 
-        # Toggle de tema (solo ícono)
         self.btn_theme = QToolButton()
         self.btn_theme.setObjectName("ToolbarBtn")
         self.btn_theme.setToolTip("Alternar tema")
@@ -155,11 +141,11 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(spacer)
         self.toolbar.addWidget(self.btn_theme)
 
-        # Ensamblar centro
+        # Ensamblar
         layout.addWidget(self.sidebar)
         layout.addWidget(self.stack, 1)
 
-        # Status bar con dos progresos
+        # Status bar
         self.status = QStatusBar()
         self.setStatusBar(self.status)
         self.status_label = QLabel("Listo")
@@ -188,22 +174,16 @@ class MainWindow(QMainWindow):
         self.status.addPermanentWidget(tag2)
         self.status.addPermanentWidget(self.progress_bg)
 
-    # ----------------------------- Navegación ---------------------------- #
+    # ------------------------ Navegación ------------------------ #
     def _navigate(self, key: str) -> None:
-        # marcar botón activo
         for k, btn in self.nav_buttons.items():
             btn.setChecked(k == key)
-        # cambiar página si existe
-        page = self.pages.get(key)
+        page = self._pages.get(key)
         if page:
             self.stack.setCurrentWidget(page)
             self.settings.setValue("ui/last_section", key)
 
-    # ----------------------------- Actions ---------------------------- #
-    def _alert_not_implemented(self, name: str) -> None:
-        QMessageBox.information(
-            self, "Picople", f"Botón de '{name}', no implementado")
-
+    # ------------------------ Acciones ------------------------ #
     def _on_search(self) -> None:
         query = self.search_edit.text().strip()
         self._navigate("search")
@@ -236,7 +216,6 @@ class MainWindow(QMainWindow):
             self.status_label.setText(msg)
             self.progress_main.setValue(val)
             QTimer.singleShot(600, lambda: run_steps(i + 1))
-
         run_steps(0)
 
     def _on_toggle_theme(self) -> None:
@@ -248,7 +227,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText("Tema alternado")
         QTimer.singleShot(1200, lambda: self.status_label.setText("Listo"))
 
-    # ----------------------------- Helpers ---------------------------- #
+    # ------------------------ Helpers ------------------------ #
     def _apply_theme(self) -> None:
         self.setStyleSheet(QSS_DARK if self.dark_mode else QSS_LIGHT)
 
@@ -256,19 +235,31 @@ class MainWindow(QMainWindow):
         style = self.style()
         mapping = {
             "collection": QStyle.SP_DirIcon,
-            "favorites": QStyle.SP_DialogYesButton,
-            "albums": QStyle.SP_FileDialogListView,
-            "people": QStyle.SP_DirHomeIcon,
-            "things": QStyle.SP_DesktopIcon,
-            "folders": QStyle.SP_DirOpenIcon,
+            "favorites":  QStyle.SP_DialogYesButton,
+            "albums":     QStyle.SP_FileDialogListView,
+            "people":     QStyle.SP_DirHomeIcon,
+            "things":     QStyle.SP_DesktopIcon,
+            "folders":    QStyle.SP_DirOpenIcon,
         }
         return style.standardIcon(mapping.get(key, QStyle.SP_FileIcon))
 
     def _update_theme_icon(self) -> None:
-        # Mostramos el ícono del modo actual (🌙 cuando está oscuro, ☀ cuando está claro)
         self.btn_theme.setText("🌙" if self.dark_mode else "☀")
 
-    # ----------------------------- Persistencia ---------------------------- #
+    def _first_run_prompt(self) -> None:
+        ans = QMessageBox.question(
+            self, "Bienvenido a Picople",
+            "Aún no has elegido carpetas para indexar.\n\n¿Deseas configurarlas ahora?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
+        )
+        if ans == QMessageBox.Yes:
+            self._navigate("folders")
+            # abrir el diálogo de agregar carpeta si la vista lo soporta
+            folders_view = self._pages.get("folders")
+            if hasattr(folders_view, "open_add_dialog"):
+                folders_view.open_add_dialog()
+
+    # ------------------------ Persistencia ventana ------------------------ #
     def closeEvent(self, event) -> None:
         self.settings.setValue("ui/geometry", self.saveGeometry())
         self.settings.setValue("ui/windowState", self.saveState())
