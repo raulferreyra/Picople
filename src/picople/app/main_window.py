@@ -161,12 +161,14 @@ class MainWindow(QMainWindow):
         self.progress_main.setRange(0, 100)
         self.progress_main.setValue(0)
         self.progress_main.setToolTip("Progreso de tarea principal")
+        self.progress_main.setTextVisible(False)
 
         self.progress_bg = QProgressBar()
         self.progress_bg.setFixedWidth(160)
         self.progress_bg.setRange(0, 0)
         self.progress_bg.hide()
         self.progress_bg.setToolTip("Trabajos en segundo plano")
+        self.progress_main.setTextVisible(False)
 
         tag1 = QLabel("Proceso:")
         tag1.setObjectName("StatusTag")
