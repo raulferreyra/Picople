@@ -107,7 +107,7 @@ class MainWindow(QMainWindow):
         # Centro: páginas
         self.stack = QStackedWidget()
         self._pages = {
-            "collection": views.CollectionView(),
+            "collection": views.CollectionView(db=self._db),
             "favorites":  views.FavoritesView(),
             "albums":     views.AlbumsView(),
             "people":     views.PeopleView(),

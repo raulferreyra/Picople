@@ -1,4 +1,6 @@
 # src/picople/app/views/__init__.py
+from .FoldersView import FoldersView
+from .CollectionView import CollectionView
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
 from PySide6.QtCore import Qt
 
@@ -57,7 +59,6 @@ class SearchView(SectionView):
 
 
 # ----- Importa la vista separada (evita colisiones de nombre) -----
-from .FoldersView import FoldersView  
 
 __all__ = [
     "SectionView", "CollectionView", "FavoritesView",
