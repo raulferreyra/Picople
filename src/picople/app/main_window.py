@@ -2,7 +2,7 @@
 from __future__ import annotations
 from typing import List, Tuple
 
-from PySide6.QtCore import Qt, QTimer, QSize, QSettings
+from PySide6.QtCore import Qt, QTimer, QSize, QSettings, QThread
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFrame, QPushButton, QLabel,
@@ -13,6 +13,11 @@ from PySide6.QtWidgets import (
 from picople.core.theme import QSS_DARK, QSS_LIGHT
 from picople.app import views
 from picople.core.config import get_root_dirs
+from picople.infrastructure.indexer import IndexerWorker
+from pathlib import Path
+
+
+# ------------------------ Constantes ------------------------ #
 
 SECTIONS = [
     ("collection", "Colección"),
@@ -195,28 +200,37 @@ class MainWindow(QMainWindow):
             self, "Picople", f"Buscar: '{query}' (no implementado)")
 
     def _on_update(self) -> None:
-        steps: List[Tuple[str, int]] = [
-            ("Leyendo datos de importación…", 20),
-            ("Corrigiendo caras…", 45),
-            ("Arreglando lugares…", 70),
-            ("Actualizando índices…", 90),
-        ]
-        self.status_label.setText("Iniciando actualización…")
+        roots = get_root_dirs()
+        if not roots:
+            QMessageBox.information(
+                self, "Picople", "No hay carpetas configuradas. Ve a 'Carpetas' para agregar.")
+            return
+
+        # Deshabilitar boton mientras corre
+        self.btn_update.setEnabled(False)
         self.progress_main.setValue(0)
         self.progress_bg.show()
+        self.status_label.setText("Preparando indexación…")
 
-        def run_steps(i: int = 0) -> None:
-            if i >= len(steps):
-                self.progress_main.setValue(100)
-                self.status_label.setText("Listo")
-                QTimer.singleShot(600, lambda: self.progress_main.setValue(0))
-                self.progress_bg.hide()
-                return
-            msg, val = steps[i]
-            self.status_label.setText(msg)
-            self.progress_main.setValue(val)
-            QTimer.singleShot(600, lambda: run_steps(i + 1))
-        run_steps(0)
+        # Hilo + worker
+        self._index_thread = QThread(self)
+        self._indexer = IndexerWorker(roots, thumb_size=320)
+        self._indexer.moveToThread(self._index_thread)
+
+        # Conexiones
+        self._index_thread.started.connect(self._indexer.run)
+        self._indexer.started.connect(self._on_index_started)
+        self._indexer.progress.connect(self._on_index_progress)
+        self._indexer.info.connect(lambda msg: self.status_label.setText(msg))
+        self._indexer.error.connect(self._on_index_error)
+        self._indexer.finished.connect(self._on_index_finished)
+        self._indexer.finished.connect(self._index_thread.quit)
+
+        # Limpieza al terminar
+        self._index_thread.finished.connect(self._indexer.deleteLater)
+        self._index_thread.finished.connect(self._index_thread.deleteLater)
+
+        self._index_thread.start()
 
     def _on_toggle_theme(self) -> None:
         self.dark_mode = not self.dark_mode
@@ -259,7 +273,37 @@ class MainWindow(QMainWindow):
             if hasattr(folders_view, "open_add_dialog"):
                 folders_view.open_add_dialog()
 
+    def _on_index_started(self, total: int):
+        self.status_label.setText(f"Indexando… 0/{total}")
+        self.progress_main.setRange(0, 100)
+        self.progress_main.setValue(0)
+
+    def _on_index_progress(self, i: int, total: int, path: str):
+        if total > 0:
+            pct = int(i * 100 / total)
+            self.progress_main.setValue(pct)
+            name = Path(path).name if path else ""
+            self.status_label.setText(f"Indexando… {i}/{total}  •  {name}")
+
+    def _on_index_error(self, path: str, err: str):
+        # No frenamos la cola, solo informamos en la barra (se podría loguear)
+        self.status_label.setText(f"Error con {Path(path).name}: {err[:60]}")
+
+    def _on_index_finished(self, summary: dict):
+        self.progress_main.setValue(100)
+        self.progress_bg.hide()
+        self.btn_update.setEnabled(True)
+        total = summary.get("total", 0)
+        imgs = summary.get("images", 0)
+        vids = summary.get("videos", 0)
+        ok = summary.get("thumbs_ok", 0)
+        fail = summary.get("thumbs_fail", 0)
+        self.status_label.setText(
+            f"Indexación lista: {total} archivos  •  {imgs} fotos / {vids} videos  •  miniaturas OK {ok}, fallos {fail}")
+        QTimer.singleShot(2000, lambda: self.status_label.setText("Listo"))
+
     # ------------------------ Persistencia ventana ------------------------ #
+
     def closeEvent(self, event) -> None:
         self.settings.setValue("ui/geometry", self.saveGeometry())
         self.settings.setValue("ui/windowState", self.saveState())
