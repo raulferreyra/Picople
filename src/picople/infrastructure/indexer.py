@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
+from typing import List, Optional
 
 from PySide6.QtCore import QObject, Signal
 
@@ -14,17 +14,22 @@ from picople.infrastructure.db import Database
 
 
 class IndexerWorker(QObject):
-    started = Signal(int)                             # total archivos
-    progress = Signal(int, int, str)                  # indexed, total, path
-    info = Signal(str)                                # mensajes informativos
-    error = Signal(str, str)                          # path, error
-    finished = Signal(dict)                           # resumen
+    started = Signal(int)                 # total archivos
+    progress = Signal(int, int, str)      # indexed, total, path
+    info = Signal(str)                    # mensajes informativos
+    error = Signal(str, str)              # path, error
+    finished = Signal(dict)               # resumen
 
-    def __init__(self, roots: List[str], thumb_size: int = 320) -> None:
+    def __init__(self, roots: List[str], thumb_size: int = 320, db: Optional[Database] = None) -> None:
         super().__init__()
         self.roots = [Path(r) for r in roots if r]
         self.thumb_size = thumb_size
         self.db = db
+        self._cancel = False
+
+    # permitir cancelación desde la UI
+    def cancel(self) -> None:
+        self._cancel = True
 
     def _collect_files(self) -> List[Path]:
         files: List[Path] = []
@@ -59,6 +64,9 @@ class IndexerWorker(QObject):
                       "videos": 0, "thumbs_ok": 0, "thumbs_fail": 0}
 
             for i, p in enumerate(files, start=1):
+                if self._cancel:
+                    self.info.emit("Indexación cancelada.")
+                    break
                 try:
                     ext = p.suffix.lower()
                     st = p.stat()
@@ -78,7 +86,6 @@ class IndexerWorker(QObject):
                         thumb_file = str(out) if out and out.exists() else None
                         counts["thumbs_ok" if thumb_file else "thumbs_fail"] += 1
 
-                    # Persistir en DB (si está disponible)
                     if self.db and self.db.is_open:
                         self.db.upsert_media(
                             str(p), kind, mtime, size, thumb_file)

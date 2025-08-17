@@ -48,6 +48,9 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._apply_theme()
 
+        self._index_thread = None
+        self._indexer = None
+
         # Restaurar geometría/estado
         geom = self.settings.value("ui/geometry")
         if geom is not None:
@@ -117,6 +120,7 @@ class MainWindow(QMainWindow):
 
         # Toolbar
         self.toolbar = QToolBar()
+        self.toolbar.setObjectName("MainToolbar")
         self.toolbar.setMovable(False)
         self.addToolBar(Qt.TopToolBarArea, self.toolbar)
 
@@ -380,6 +384,19 @@ class MainWindow(QMainWindow):
     # ------------------------ Persistencia ventana ------------------------ #
 
     def closeEvent(self, event) -> None:
+        try:
+            if self._index_thread and self._index_thread.isRunning():
+                self.status_label.setText("Cerrando tareas en segundo plano…")
+                if self._indexer:
+                    try:
+                        self._indexer.cancel()   # pide cancelación
+                    except Exception:
+                        pass
+                self._index_thread.quit()
+                self._index_thread.wait(5000)  # hasta 5s
+        except Exception:
+            pass
+
         self.settings.setValue("ui/geometry", self.saveGeometry())
         self.settings.setValue("ui/windowState", self.saveState())
         super().closeEvent(event)
