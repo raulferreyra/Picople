@@ -1,7 +1,7 @@
 # src/picople/infrastructure/db.py
 from __future__ import annotations
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 # Intentamos varios módulos compatibles con SQLCipher
 _sqlcipher_mod = None
@@ -18,10 +18,15 @@ class DBError(RuntimeError):
     pass
 
 
+def _sql_quote(s: str) -> str:
+    """Escapa comillas simples para usarlas dentro de literales SQL ('...')."""
+    return s.replace("'", "''")
+
+
 class Database:
     """
     Gestor de DB cifrada con SQLCipher.
-    - Requiere `sqlcipher3-binary` o `pysqlcipher3`.
+    - Requiere 'sqlcipher3-wheels' (Windows) o 'pysqlcipher3'.
     - Activa WAL.
     - Esquema mínimo para metadatos de medios.
     """
@@ -37,23 +42,28 @@ class Database:
     def open(self, passphrase: str) -> None:
         if _sqlcipher_mod is None:
             raise DBError(
-                "No se encontró SQLCipher. Instala 'sqlcipher3-binary' (recomendado) o 'pysqlcipher3'."
+                "No se encontró SQLCipher. Instala 'sqlcipher3-wheels' (Windows) o 'pysqlcipher3'."
             )
+
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = _sqlcipher_mod.connect(str(self.db_path))
         cur = self.conn.cursor()
 
-        # Clave y configuración segura (algunas PRAGMAs pueden no existir según build; se ignoran).
-        cur.execute("PRAGMA key = ?;", (passphrase,))
+        # PRAGMA key: NO acepta placeholders → embebemos la clave escapada
+        cur.execute(f"PRAGMA key = '{_sql_quote(passphrase)}';")
+
+        # (Opcional) parámetros de endurecimiento: pueden no existir según build
         try:
             cur.execute("PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA512;")
             cur.execute("PRAGMA kdf_iter = 256000;")
             cur.execute("PRAGMA cipher_hmac_algorithm = HMAC_SHA256;")
             cur.execute("PRAGMA cipher_page_size = 4096;")
+            # Si abres DBs antiguas:
+            # cur.execute("PRAGMA cipher_compatibility = 4;")
         except Exception:
             pass
 
-        # Verificar clave
+        # Verificar que la clave es válida (si no, falla aquí)
         try:
             cur.execute("SELECT count(*) FROM sqlite_master;")
             cur.fetchone()
@@ -82,14 +92,12 @@ class Database:
     # ---------------- Schema ---------------- #
     def _ensure_schema(self) -> None:
         cur = self.conn.cursor()
-        # Rutas de raíz (además de QSettings podremos persistir aquí si lo deseas luego)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS folders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 path TEXT NOT NULL UNIQUE
             );
         """)
-        # Medios indexados
         cur.execute("""
             CREATE TABLE IF NOT EXISTS media (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,7 +108,6 @@ class Database:
                 thumb_path TEXT
             );
         """)
-        # Índices
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_media_mtime ON media(mtime);")
         cur.execute(
@@ -110,7 +117,6 @@ class Database:
     def upsert_media(self, path: str, kind: str, mtime: int, size: int, thumb_path: Optional[str]) -> None:
         cur = self.conn.cursor()
         try:
-            # UPSERT (si la versión lo soporta)
             cur.execute("""
                 INSERT INTO media(path, kind, mtime, size, thumb_path)
                 VALUES (?, ?, ?, ?, ?)
@@ -121,7 +127,6 @@ class Database:
                     thumb_path=excluded.thumb_path;
             """, (path, kind, mtime, size, thumb_path))
         except Exception:
-            # Fallback: update/insert en dos pasos
             cur.execute("UPDATE media SET kind=?, mtime=?, size=?, thumb_path=? WHERE path=?;",
                         (kind, mtime, size, thumb_path, path))
             if cur.rowcount == 0:
@@ -133,11 +138,12 @@ class Database:
     def backup_to(self, dest_path: Path, passphrase: str) -> None:
         """
         Copia cifrada de la DB usando export propio de SQLCipher.
+        ATTACH ... KEY tampoco acepta placeholders.
         """
         cur = self.conn.cursor()
-        # Export SQLCipher: attach destino con clave y export
-        cur.execute(f"ATTACH DATABASE ? AS backup KEY ?;",
-                    (str(dest_path), passphrase))
+        d = _sql_quote(str(dest_path))
+        k = _sql_quote(passphrase)
+        cur.execute(f"ATTACH DATABASE '{d}' AS backup KEY '{k}';")
         cur.execute("SELECT sqlcipher_export('backup');")
         cur.execute("DETACH DATABASE backup;")
         self.conn.commit()
