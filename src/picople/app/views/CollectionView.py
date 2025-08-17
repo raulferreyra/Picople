@@ -182,7 +182,7 @@ class CollectionView(SectionView):
                 "kind": it["kind"],
                 "mtime": it["mtime"],
                 "size": it["size"],
-                "thumb_path": it.get("thumb_path")
+                "thumb_path": it.get("thumb_path"),
             })
         self.openViewer.emit(items, index.row())
 

@@ -19,6 +19,7 @@ from pathlib import Path
 from picople.core.paths import app_data_dir
 from picople.app.controllers import MediaItem
 from picople.app.views.ViewerOverlay import ViewerOverlay
+from picople.app.views.MediaViewerPanel import MediaViewerPanel
 
 
 # ------------------------ Constantes ------------------------ #
@@ -125,9 +126,10 @@ class MainWindow(QMainWindow):
             "settings":   views.SettingsView(self.settings),
         }
 
+        self._viewer_page = None
         coll = self._pages.get("collection")
         if hasattr(coll, "openViewer"):
-            coll.openViewer.connect(self._open_viewer_overlay)
+            coll.openViewer.connect(self._open_viewer_embedded)
 
         settings_view = self._pages.get("settings")
         if hasattr(settings_view, "settingsApplied"):
@@ -441,6 +443,24 @@ class MainWindow(QMainWindow):
         media_items = [MediaItem(path=i["path"], kind=i["kind"], mtime=i["mtime"],
                                  size=i["size"], thumb_path=i.get("thumb_path")) for i in items]
         self.viewer_overlay.open(media_items, start_index)
+
+    def _open_viewer_embedded(self, items: list, start_index: int):
+        from PySide6.QtWidgets import QWidget
+        media_items = [MediaItem(path=i["path"], kind=i["kind"], mtime=i["mtime"],
+                                 size=i["size"], thumb_path=i.get("thumb_path")) for i in items]
+        if self._viewer_page is not None:
+            # reemplaza la página vieja
+            idx = self.stack.indexOf(self._viewer_page)
+            if idx >= 0:
+                w = self.stack.widget(idx)
+                self.stack.removeWidget(w)
+                w.deleteLater()
+            self._viewer_page = None
+
+        self._viewer_page = MediaViewerPanel(
+            media_items, start_index, parent=self)
+        self.stack.addWidget(self._viewer_page)
+        self.stack.setCurrentWidget(self._viewer_page)
 
     def closeEvent(self, event) -> None:
         try:
