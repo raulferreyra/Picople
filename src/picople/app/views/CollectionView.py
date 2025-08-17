@@ -64,7 +64,7 @@ class CollectionView(SectionView):
         self.model = MediaListModel(tile_size=160)
         self.view.setModel(self.model)
 
-        lay = self.layout()
+        lay = self.content_layout
         lay.addLayout(row)
         lay.addWidget(self.view, 1)
 

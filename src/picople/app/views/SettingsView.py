@@ -21,7 +21,7 @@ class SettingsView(SectionView):
     def __init__(self, settings: QSettings):
         super().__init__("Preferencias", "Ajusta recursos, miniaturas y rendimiento.", compact=True)
         self.settings = settings
-        lay = self.layout()
+        lay = self.content_layout
 
         # ---- Hardware (lectura) ----
         self.lbl_hw = QLabel("Hardware: (sin leer)")

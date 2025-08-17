@@ -75,7 +75,7 @@ class FoldersView(SectionView):
         self.list.setGridSize(QSize(self._tile_w, self._tile_h))
 
         # Ensamble en el layout del SectionView (debajo del subtítulo)
-        lay = self.layout()
+        lay = self.content_layout
         lay.addLayout(actions_row)
         # ocupa todo el resto (con scrollbar si hace falta)
         lay.addWidget(self.list, 1)
