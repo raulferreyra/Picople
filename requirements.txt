@@ -8,6 +8,9 @@ mypy==1.17.1
 mypy_extensions==1.1.0
 packaging==25.0
 pathspec==0.12.1
+picople==0.0.1
+pillow==11.3.0
+pillow_heif==1.1.0
 platformdirs==4.3.8
 pluggy==1.6.0
 pydantic==2.11.7
