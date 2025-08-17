@@ -10,7 +10,7 @@ from PySide6.QtGui import QDesktopServices
 
 from picople.infrastructure.db import Database
 from picople.app.controllers import MediaListModel
-from . import SectionView
+from .SectionView import SectionView
 
 
 class CollectionView(SectionView):

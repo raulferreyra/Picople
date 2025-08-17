@@ -13,7 +13,7 @@ from PySide6.QtGui import QDesktopServices, QIcon, QFontMetrics
 from PySide6.QtWidgets import QApplication, QStyle
 
 from picople.core.config import get_root_dirs, add_root_dir, remove_root_dir
-from . import SectionView  # base definida en views/__init__.py
+from .SectionView import SectionView
 
 
 class FoldersView(SectionView):
