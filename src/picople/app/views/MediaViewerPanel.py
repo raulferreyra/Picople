@@ -43,6 +43,8 @@ class MediaViewerPanel(QWidget):
 
         for b in (self.btn_prev, self.btn_next, self.btn_fit, self.btn_100,
                   self.btn_zoom_in, self.btn_zoom_out, self.btn_rotate, self.btn_playpause):
+            b.setObjectName("ToolbarBtn")
+            self.tb.setObjectName("ViewerToolbar")
             self.tb.addWidget(b)
         root.addWidget(self.tb)
 
