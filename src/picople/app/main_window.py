@@ -44,6 +44,7 @@ class MainWindow(QMainWindow):
         self.dark_mode = (self.settings.value("ui/theme", "dark") == "dark")
 
         self._db = None
+        self._db_key = None
         self._open_database_or_prompt()
 
         self._build_ui()
@@ -246,7 +247,12 @@ class MainWindow(QMainWindow):
 
         self._index_thread = QThread(self)
         self._indexer = IndexerWorker(
-            roots, thumb_size=thumb_sz, db=self._db, allow_video_thumbs=video_thumbs)
+            roots,
+            thumb_size=thumb_sz,
+            db_path=self._db.db_path,
+            db_key=self._db_key,
+            allow_video_thumbs=video_thumbs
+        )
         self._indexer.moveToThread(self._index_thread)
 
         self._index_thread.started.connect(self._indexer.run)
@@ -328,6 +334,9 @@ class MainWindow(QMainWindow):
         vids = summary.get("videos", 0)
         ok = summary.get("thumbs_ok", 0)
         fail = summary.get("thumbs_fail", 0)
+        coll = self._pages.get("collection")
+        if hasattr(coll, "refresh"):
+            coll.refresh(reset=True)
         self.status_label.setText(
             f"Indexación lista: {total} archivos  •  {imgs} fotos / {vids} videos  •  miniaturas OK {ok}, fallos {fail}")
         QTimer.singleShot(2000, lambda: self.status_label.setText("Listo"))
@@ -340,38 +349,48 @@ class MainWindow(QMainWindow):
 
         self._db = Database(db_path)
 
-        # Si DB no existe -> solicitar crear passphrase
         if not db_path.exists():
-            pw, ok = QInputDialog.getText(self, "Crear seguridad",
-                                          "Crea una clave para cifrar la base de datos:",
-                                          echo=QLineEdit.Password)
+            # DB no existe -> solicitar crear passphrase
+            pw, ok = QInputDialog.getText(
+                self, "Crear seguridad",
+                "Crea una clave para cifrar la base de datos:",
+                echo=QLineEdit.Password
+            )
             if not ok or not pw:
                 QMessageBox.warning(
                     self, "Picople", "Se necesita una clave para crear la base cifrada.")
+                self._db = None
                 return
             try:
                 self._db.open(pw)
+                self._db_key = pw                 # <-- guarda la clave SOLO aquí
                 QMessageBox.information(
                     self, "Picople", "Base de datos cifrada creada correctamente.")
             except DBError as e:
                 QMessageBox.critical(self, "Picople", str(e))
                 self._db = None
+                self._db_key = None
                 return
         else:
             # DB ya existe: pedir clave para abrir
-            pw, ok = QInputDialog.getText(self, "Desbloquear seguridad",
-                                          "Ingresa la clave de la base de datos:",
-                                          echo=QLineEdit.Password)
+            pw, ok = QInputDialog.getText(
+                self, "Desbloquear seguridad",
+                "Ingresa la clave de la base de datos:",
+                echo=QLineEdit.Password
+            )
             if not ok or not pw:
                 QMessageBox.warning(
                     self, "Picople", "No se pudo abrir la base de datos cifrada.")
                 self._db = None
+                self._db_key = None
                 return
             try:
                 self._db.open(pw)
+                self._db_key = pw                 # <-- y también aquí
             except DBError as e:
                 QMessageBox.critical(self, "Picople", str(e))
                 self._db = None
+                self._db_key = None
 
     def _on_backup(self):
         if not self._db or not self._db.is_open:

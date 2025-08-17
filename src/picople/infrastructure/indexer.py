@@ -12,18 +12,26 @@ from picople.infrastructure.db import Database
 
 
 class IndexerWorker(QObject):
-    started = Signal(int)
-    progress = Signal(int, int, str)
-    info = Signal(str)
-    error = Signal(str, str)
-    finished = Signal(dict)
+    started = Signal(int)                 # total archivos
+    progress = Signal(int, int, str)      # indexed, total, path
+    info = Signal(str)                    # mensajes informativos
+    error = Signal(str, str)              # path, error
+    finished = Signal(dict)               # resumen
 
-    def __init__(self, roots: List[str], thumb_size: int = 320,
-                 db: Optional[Database] = None, allow_video_thumbs: bool = True) -> None:
+    def __init__(
+        self,
+        roots: List[str],
+        thumb_size: int = 320,
+        *,
+        db_path: Optional[Path] = None,
+        db_key: Optional[str] = None,
+        allow_video_thumbs: bool = True
+    ) -> None:
         super().__init__()
         self.roots = [Path(r) for r in roots if r]
         self.thumb_size = thumb_size
-        self.db = db
+        self.db_path = Path(db_path) if db_path else None
+        self.db_key = db_key
         self.allow_video_thumbs = allow_video_thumbs
         self._cancel = False
 
@@ -49,7 +57,13 @@ class IndexerWorker(QObject):
         return files
 
     def run(self) -> None:
+        local_db: Optional[Database] = None
         try:
+            # Abrimos una conexión PROPIA en este hilo (si hay credenciales)
+            if self.db_path and self.db_key:
+                local_db = Database(self.db_path)
+                local_db.open(self.db_key)
+
             files = self._collect_files()
             total = len(files)
             self.started.emit(total)
@@ -92,11 +106,9 @@ class IndexerWorker(QObject):
                                 counts["thumbs_ok"] += 1
                             else:
                                 counts["thumbs_fail"] += 1
-                        else:
-                            thumb_file = None  # no intentamos; no contamos como fallo
 
-                    if self.db and self.db.is_open:
-                        self.db.upsert_media(
+                    if local_db and local_db.is_open:
+                        local_db.upsert_media(
                             str(p), kind, mtime, size, thumb_file)
 
                 except Exception as e:
@@ -110,3 +122,9 @@ class IndexerWorker(QObject):
             self.error.emit("(indexer)", str(e))
             self.finished.emit(
                 {"total": 0, "images": 0, "videos": 0, "thumbs_ok": 0, "thumbs_fail": 0})
+        finally:
+            try:
+                if local_db:
+                    local_db.close()
+            except Exception:
+                pass
