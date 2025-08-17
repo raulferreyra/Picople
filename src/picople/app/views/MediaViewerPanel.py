@@ -2,13 +2,14 @@ from __future__ import annotations
 from typing import List
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedWidget, QToolBar, QToolButton, QLabel, QStatusBar
-from PySide6.QtGui import QKeySequence
+from PySide6.QtGui import QKeySequence, QShortcut
 
 from .ImageView import ImageView
 from .VideoView import VideoView
 from picople.app.controllers import MediaNavigator, MediaItem
+from picople.core.log import log
 
 
 class MediaViewerPanel(QWidget):
@@ -105,10 +106,9 @@ class MediaViewerPanel(QWidget):
         self._load_current()
 
     def _mk_shortcut(self, seq: str, fn):
-        btn = QToolButton(self)
-        btn.setShortcut(QKeySequence(seq))
-        btn.clicked.connect(fn)
-        btn.setVisible(False)
+        sc = QShortcut(QKeySequence(seq), self)
+        sc.activated.connect(fn)
+        return sc
 
     def _load_current(self):
         it = self.nav.current()
@@ -116,18 +116,21 @@ class MediaViewerPanel(QWidget):
             self.lbl_status.setText("Sin elementos")
             return
         name = Path(it.path).name
+        log("Viewer.load:", {"index": self.nav.index, "count": self.nav.count(
+        ), "kind": it.kind, "path": it.path})
         self.lbl_status.setText(
             f"{self.nav.index+1}/{self.nav.count()}  •  {name}")
 
         if it.kind == "image":
-            self.video_view.stop()            # <- evita fugas/segfault
+            self.video_view.stop()  # evita fugas/segfault al cambiar a imagen
             self.image_view.load_path(it.path)
             self.stack.setCurrentIndex(0)
-            self.btn_playpause.setEnabled(False)
+            self.btn_playpause.setEnabled(False)  # no aplica en imagen
         else:
             self.video_view.load_path(it.path)
             self.stack.setCurrentIndex(1)
-            self.btn_playpause.setEnabled(self.video_view.is_ready())
+            # habilita ya; VideoView resuelve pending
+            self.btn_playpause.setEnabled(True)
 
         self.btn_prev.setEnabled(self.nav.has_prev())
         self.btn_next.setEnabled(self.nav.has_next())
