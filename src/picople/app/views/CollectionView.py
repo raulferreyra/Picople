@@ -66,14 +66,23 @@ class CollectionView(SectionView):
         self.view.setModel(self.model)
 
         tile = int(self.model.tile_size)
+
+        # usa el tile también en iconSize:
+        self.view.setIconSize(QSize(tile, tile))
+
+        # si NO quieres mostrar nombres, text_lines=0
         self.delegate = ThumbDelegate(
-            tile=tile, text_lines=2, parent=self.view)
+            tile=tile, text_lines=0, parent=self.view)
         self.view.setItemDelegate(self.delegate)
 
-        # fija celdas cómodas para el layout de iconos
+        # grid estable (altura depende de text_lines)
         fm = self.view.fontMetrics()
-        cell_h = 8 + tile + 6 + fm.height()*2 + 8
-        cell_w = 10 + tile + 10
+        text_h = (
+            fm.height() * self.delegate.text_lines) if self.delegate.text_lines > 0 else 0
+        pad_top = (
+            self.delegate.text_pad_top if self.delegate.text_lines > 0 else 0)
+        cell_h = self.delegate.vpad + tile + pad_top + text_h + self.delegate.vpad
+        cell_w = self.delegate.hpad + tile + self.delegate.hpad
         self.view.setGridSize(QSize(cell_w, cell_h))
 
         lay = self.content_layout
