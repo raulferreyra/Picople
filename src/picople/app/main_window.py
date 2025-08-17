@@ -7,14 +7,16 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFrame, QPushButton, QLabel,
     QLineEdit, QToolBar, QStatusBar, QProgressBar, QMessageBox, QStyle,
-    QToolButton, QStackedWidget, QSizePolicy
+    QToolButton, QStackedWidget, QSizePolicy, QFileDialog, QInputDialog
 )
 
 from picople.core.theme import QSS_DARK, QSS_LIGHT
 from picople.app import views
 from picople.core.config import get_root_dirs
 from picople.infrastructure.indexer import IndexerWorker
+from picople.infrastructure.db import Database, DBError
 from pathlib import Path
+from picople.core.paths import app_data_dir
 
 
 # ------------------------ Constantes ------------------------ #
@@ -39,6 +41,9 @@ class MainWindow(QMainWindow):
         # Estado persistente
         self.settings = QSettings()
         self.dark_mode = (self.settings.value("ui/theme", "dark") == "dark")
+
+        self._db = None
+        self._open_database_or_prompt()
 
         self._build_ui()
         self._apply_theme()
@@ -303,6 +308,47 @@ class MainWindow(QMainWindow):
         self.status_label.setText(
             f"Indexación lista: {total} archivos  •  {imgs} fotos / {vids} videos  •  miniaturas OK {ok}, fallos {fail}")
         QTimer.singleShot(2000, lambda: self.status_label.setText("Listo"))
+
+    def _open_database_or_prompt(self):
+        # Ruta DB cifrada
+        db_dir = app_data_dir() / "db"
+        db_dir.mkdir(parents=True, exist_ok=True)
+        db_path = db_dir / "picople.db"
+
+        self._db = Database(db_path)
+
+        # Si DB no existe -> solicitar crear passphrase
+        if not db_path.exists():
+            pw, ok = QInputDialog.getText(self, "Crear seguridad",
+                                          "Crea una clave para cifrar la base de datos:",
+                                          echo=QLineEdit.Password)
+            if not ok or not pw:
+                QMessageBox.warning(
+                    self, "Picople", "Se necesita una clave para crear la base cifrada.")
+                return
+            try:
+                self._db.open(pw)
+                QMessageBox.information(
+                    self, "Picople", "Base de datos cifrada creada correctamente.")
+            except DBError as e:
+                QMessageBox.critical(self, "Picople", str(e))
+                self._db = None
+                return
+        else:
+            # DB ya existe: pedir clave para abrir
+            pw, ok = QInputDialog.getText(self, "Desbloquear seguridad",
+                                          "Ingresa la clave de la base de datos:",
+                                          echo=QLineEdit.Password)
+            if not ok or not pw:
+                QMessageBox.warning(
+                    self, "Picople", "No se pudo abrir la base de datos cifrada.")
+                self._db = None
+                return
+            try:
+                self._db.open(pw)
+            except DBError as e:
+                QMessageBox.critical(self, "Picople", str(e))
+                self._db = None
 
     # ------------------------ Persistencia ventana ------------------------ #
 
