@@ -1,14 +1,16 @@
 # src/picople/infrastructure/indexer.py
 from __future__ import annotations
 import os
+import time
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 
 from PySide6.QtCore import QObject, Signal
 
 from picople.core.formats import IMAGE_EXTS, VIDEO_EXTS
 from picople.core.paths import thumbs_dir
 from picople.infrastructure.thumbs import image_thumb, video_thumb
+from picople.infrastructure.db import Database
 
 
 class IndexerWorker(QObject):
@@ -22,6 +24,7 @@ class IndexerWorker(QObject):
         super().__init__()
         self.roots = [Path(r) for r in roots if r]
         self.thumb_size = thumb_size
+        self.db = db
 
     def _collect_files(self) -> List[Path]:
         files: List[Path] = []
@@ -58,20 +61,28 @@ class IndexerWorker(QObject):
             for i, p in enumerate(files, start=1):
                 try:
                     ext = p.suffix.lower()
+                    st = p.stat()
+                    mtime = int(st.st_mtime)
+                    size = int(st.st_size)
+                    kind = "image" if ext in IMAGE_EXTS else "video"
+
+                    thumb_file = None
                     if ext in IMAGE_EXTS:
                         counts["images"] += 1
                         out = image_thumb(p, thumbs, self.thumb_size)
-                        if out and out.exists():
-                            counts["thumbs_ok"] += 1
-                        else:
-                            counts["thumbs_fail"] += 1
-                    elif ext in VIDEO_EXTS:
+                        thumb_file = str(out) if out and out.exists() else None
+                        counts["thumbs_ok" if thumb_file else "thumbs_fail"] += 1
+                    else:
                         counts["videos"] += 1
                         out = video_thumb(p, thumbs, self.thumb_size)
-                        if out and out.exists():
-                            counts["thumbs_ok"] += 1
-                        else:
-                            counts["thumbs_fail"] += 1
+                        thumb_file = str(out) if out and out.exists() else None
+                        counts["thumbs_ok" if thumb_file else "thumbs_fail"] += 1
+
+                    # Persistir en DB (si está disponible)
+                    if self.db and self.db.is_open:
+                        self.db.upsert_media(
+                            str(p), kind, mtime, size, thumb_file)
+
                 except Exception as e:
                     self.error.emit(str(p), str(e))
                     counts["thumbs_fail"] += 1
