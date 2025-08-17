@@ -31,42 +31,66 @@ def _hash_for(path: Path) -> str:
 
 
 def image_thumb(src: Path, out_dir: Path, size: int = 320) -> Path:
-    out = out_dir / f"{_hash_for(src)}.jpg"
-    if out.exists():
-        return out
-    with Image.open(src) as im:
-        # GIF animado → primer frame
-        if getattr(im, "is_animated", False):
-            im.seek(0)
-        im = ImageOps.exif_transpose(im)  # respeta orientación
-        # convertimos a RGB para JPG
-        if im.mode not in ("RGB", "RGBA"):
-            im = im.convert("RGB")
-        # preservar aspecto
-        im.thumbnail((size, size))
-        bg = Image.new("RGB", (size, size), (16, 16, 16))
-        # centrar
-        x = (size - im.width) // 2
-        y = (size - im.height) // 2
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out = out_dir / (src.stem + ".jpg")
+
+        im = Image.open(src)
+        im = ImageOps.exif_transpose(im)  # respeta EXIF
+        im.thumbnail((size, size), Image.Resampling.LANCZOS)
+
+        # fondo oscuro neutro
+        bg = Image.new("RGB", (size, size), (16, 16, 20))
+        # centrar manteniendo aspecto
+        x = (size - im.width)//2
+        y = (size - im.height)//2
         bg.paste(im, (x, y))
-        bg.save(out, format="JPEG", quality=85, optimize=True)
-    return out
+        bg.save(out, "JPEG", quality=90)
+        return out
+    except Exception:
+        return None
 
 
 def video_thumb(src: Path, out_dir: Path, size: int = 320) -> Optional[Path]:
-    # Requiere ffmpeg en PATH
     if not shutil.which("ffmpeg"):
         return None
-    out = out_dir / f"{_hash_for(src)}.jpg"
-    if out.exists():
-        return out
-    # Un frame representativo, escalado al tamaño manteniendo aspecto
-    cmd = [
-        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-        "-i", str(src),
-        "-frames:v", "1",
-        "-vf", f"thumbnail,scale={size}:-1:flags=lanczos,pad={size}:{size}:(ow-iw)/2:(oh-ih)/2:color=0x101010",
-        str(out)
-    ]
-    subprocess.run(cmd, check=False)
-    return out if out.exists() else None
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out = out_dir / (src.stem + ".jpg")
+
+        # Frame temprano pero no negro: 0.5s
+        # Escalado cuadrado manteniendo aspecto + padding
+        vf = f"scale='iw*min({size}/iw\\,{size}/ih)':'ih*min({size}/iw\\,{size}/ih)',pad={size}:{size}:(ow-iw)/2:(oh-ih)/2:color=0x101418"
+
+        cmd = [
+            "ffmpeg",
+            "-hide_banner", "-loglevel", "error",
+            "-ss", "0.5",
+            "-i", str(src),
+            "-frames:v", "1",
+            "-vf", vf,
+            "-y",
+            str(out)
+        ]
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
+        return out if out.exists() else None
+    except Exception:
+        # intento de fallback (seek después de -i por exactitud)
+        try:
+            vf = f"scale='iw*min({size}/iw\\,{size}/ih)':'ih*min({size}/iw\\,{size}/ih)',pad={size}:{size}:(ow-iw)/2:(oh-ih)/2:color=0x101418"
+            cmd = [
+                "ffmpeg",
+                "-hide_banner", "-loglevel", "error",
+                "-i", str(src),
+                "-ss", "0.5",
+                "-frames:v", "1",
+                "-vf", vf,
+                "-y",
+                str(out)
+            ]
+            subprocess.run(
+                cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return out if out.exists() else None
+        except Exception:
+            return None

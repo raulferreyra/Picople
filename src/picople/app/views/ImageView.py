@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QScrollArea, QLabel
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 # Si tienes pillow-heif instalado, PIL ya sabrá abrir HEIC/HEIF.
 # Para GIF animado, tomamos el primer frame.
@@ -41,6 +41,7 @@ class ImageView(QScrollArea):
     def load_path(self, path: str) -> bool:
         try:
             img = Image.open(path)
+            img = ImageOps.exif_transpose(img)
             # primer frame si animado
             try:
                 img.seek(0)

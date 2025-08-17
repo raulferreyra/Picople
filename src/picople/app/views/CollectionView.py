@@ -2,16 +2,16 @@ from __future__ import annotations
 from typing import Optional
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize, QModelIndex, QUrl
+from PySide6.QtCore import QSize, QModelIndex
 from PySide6.QtWidgets import (
     QHBoxLayout, QListView, QComboBox, QLineEdit, QToolButton, QLabel, QMessageBox
 )
-from PySide6.QtGui import QDesktopServices
 
 from picople.infrastructure.db import Database
 from picople.app.controllers import MediaListModel, MediaItem
 from .MediaViewer import MediaViewer
 from .SectionView import SectionView
+from .ThumbDelegate import ThumbDelegate
 
 
 class CollectionView(SectionView):
@@ -64,6 +64,17 @@ class CollectionView(SectionView):
 
         self.model = MediaListModel(tile_size=160)
         self.view.setModel(self.model)
+
+        tile = int(self.model.tile_size)
+        self.delegate = ThumbDelegate(
+            tile=tile, text_lines=2, parent=self.view)
+        self.view.setItemDelegate(self.delegate)
+
+        # fija celdas cómodas para el layout de iconos
+        fm = self.view.fontMetrics()
+        cell_h = 8 + tile + 6 + fm.height()*2 + 8
+        cell_w = 10 + tile + 10
+        self.view.setGridSize(QSize(cell_w, cell_h))
 
         lay = self.content_layout
         lay.addLayout(row)
@@ -171,6 +182,12 @@ class CollectionView(SectionView):
     def apply_runtime_settings(self, cfg: dict):
         tile = int(cfg.get("collection/tile_size", 160))
         batch = int(cfg.get("collection/batch", self.batch))
+        self.delegate.tile = tile
+        fm = self.view.fontMetrics()
+        cell_h = 8 + tile + 6 + fm.height()*2 + 8
+        cell_w = 10 + tile + 10
+        self.view.setGridSize(QSize(cell_w, cell_h))
+        self.view.viewport().update()
         self.view.setIconSize(QSize(tile, tile))
         self.model.set_tile_size(tile)
         if batch != self.batch:
