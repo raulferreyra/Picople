@@ -1,16 +1,9 @@
 from __future__ import annotations
 from typing import Optional
-from PySide6.QtCore import Qt, QUrl
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QSlider, QHBoxLayout
-from PySide6.QtGui import QAction
-
-# QtMultimedia puede faltar en algunos sistemas; lo manejamos con fallback
-try:
-    from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
-    from PySide6.QtMultimediaWidgets import QVideoWidget
-    HAS_QTMEDIA = True
-except Exception:
-    HAS_QTMEDIA = False
+from PySide6.QtCore import QUrl, Qt
+from PySide6.QtWidgets import QWidget, QVBoxLayout
+from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+from PySide6.QtMultimediaWidgets import QVideoWidget
 
 
 class VideoView(QWidget):
@@ -18,67 +11,68 @@ class VideoView(QWidget):
         super().__init__(parent)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(6)
 
-        if not HAS_QTMEDIA:
-            self._label = QLabel(
-                "Backend de video no disponible.\nInstala codecs/QtMultimedia.")
-            self._label.setAlignment(Qt.AlignCenter)
-            lay.addWidget(self._label, 1)
-            self._player = None
-            return
+        self.video_widget = QVideoWidget()
+        lay.addWidget(self.video_widget)
 
-        self._video = QVideoWidget()
-        self._player = QMediaPlayer(self)
-        self._audio = QAudioOutput(self)
-        self._player.setVideoOutput(self._video)
-        self._player.setAudioOutput(self._audio)
+        self.audio = QAudioOutput(self)
+        self.player = QMediaPlayer(self)
+        self.player.setVideoOutput(self.video_widget)
+        self.player.setAudioOutput(self.audio)
+        self._ready = False
 
-        # barra básica
-        bar = QHBoxLayout()
-        self._slider = QSlider(Qt.Horizontal)
-        self._slider.setRange(0, 1000)
-        bar.addWidget(self._slider)
+        # señales para estado/errores
+        self.player.mediaStatusChanged.connect(self._on_status)
+        self.player.errorOccurred.connect(lambda e, s: self._on_error(e, s))
 
-        lay.addWidget(self._video, 1)
-        lay.addLayout(bar)
+    def _on_status(self, st):
+        # LoadedMedia / BufferedMedia son OK
+        self._ready = st in (QMediaPlayer.LoadedMedia,
+                             QMediaPlayer.BufferedMedia)
 
-        self._player.durationChanged.connect(self._on_duration)
-        self._player.positionChanged.connect(self._on_position)
-        self._slider.sliderMoved.connect(self._on_seek)
+    def _on_error(self, err, strm):
+        # ante error: parar y limpiar
+        try:
+            self.player.stop()
+            self.player.setSource(QUrl())  # libera
+        except Exception:
+            pass
+        self._ready = False
 
     def load_path(self, path: str) -> bool:
-        if not HAS_QTMEDIA or self._player is None:
+        try:
+            # SIEMPRE parar y limpiar antes de nueva fuente
+            self.player.stop()
+            # importantísimo para evitar segfaults
+            self.player.setSource(QUrl())
+            self._ready = False
+
+            url = QUrl.fromLocalFile(path)
+            self.player.setSource(url)
+            # no auto-play; el panel decide
+            return True
+        except Exception:
+            self._ready = False
             return False
-        self._player.setSource(QUrl.fromLocalFile(path))
-        self._player.pause()
-        return True
-
-    def play_pause(self):
-        if not self._player:
-            return
-        if self._player.playbackState() == QMediaPlayer.PlayingState:
-            self._player.pause()
-        else:
-            self._player.play()
-
-    def set_volume(self, vol: int):
-        if self._player and self._player.audioOutput():
-            self._player.audioOutput().setVolume(max(0.0, min(1.0, vol / 100.0)))
 
     def is_ready(self) -> bool:
-        return self._player is not None
+        return self._ready
 
-    # slots
-    def _on_duration(self, ms: int):
-        self._slider.setEnabled(ms > 0)
+    def play_pause(self):
+        if self.player.playbackState() == QMediaPlayer.PlayingState:
+            self.player.pause()
+        else:
+            if self._ready:
+                self.player.play()
 
-    def _on_position(self, ms: int):
-        dur = max(1, self._player.duration())
-        self._slider.blockSignals(True)
-        self._slider.setValue(int(ms / dur * 1000))
-        self._slider.blockSignals(False)
+    def stop(self):
+        try:
+            self.player.stop()
+            self.player.setSource(QUrl())  # libera decoders
+            self._ready = False
+        except Exception:
+            pass
 
-    def _on_seek(self, x: int):
-        dur = self._player.duration()
-        self._player.setPosition(int(dur * (x / 1000.0)))
+    def closeEvent(self, e):
+        self.stop()
+        super().closeEvent(e)

@@ -120,6 +120,7 @@ class MediaViewerPanel(QWidget):
             f"{self.nav.index+1}/{self.nav.count()}  •  {name}")
 
         if it.kind == "image":
+            self.video_view.stop()            # <- evita fugas/segfault
             self.image_view.load_path(it.path)
             self.stack.setCurrentIndex(0)
             self.btn_playpause.setEnabled(False)
