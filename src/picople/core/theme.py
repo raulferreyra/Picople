@@ -56,6 +56,18 @@ QProgressBar::chunk { background-color: #60a5fa; border-radius: 8px; }
 /* Views (content) */
 QLabel#SectionTitle { font-size: 20px; font-weight: 700; color: #0f172a; }
 QLabel#SectionText  { font-size: 13px; color: #374151; }
+
+/* Lists & grids (FoldersView) */
+QListWidget {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+}
+QListWidget::item { color: #111827; }
+QListWidget::item:selected {
+    background: #e5efff;
+    border-radius: 8px;
+}
 """
 
 QSS_DARK = """
@@ -109,4 +121,16 @@ QProgressBar::chunk { background-color: #60a5fa; border-radius: 8px; }
 /* Views (content) */
 QLabel#SectionTitle { font-size: 20px; font-weight: 700; color: #f8fafc; }
 QLabel#SectionText  { font-size: 13px; color: #cbd5e1; }
+
+/* Lists & grids (FoldersView) */
+QListWidget {
+    background: #0b1220;
+    border: 1px solid #172036;
+    border-radius: 8px;
+}
+QListWidget::item { color: #e5e7eb; }
+QListWidget::item:selected {
+    background: #1f2a44;
+    border-radius: 8px;
+}
 """
