@@ -98,6 +98,16 @@ QListView::item:selected {
     background: #e5efff;
     border-radius: 8px;
 }
+/* Status bar */
+QStatusBar {
+    background: #f9fafb;
+    color: #111827;
+    border-top: 1px solid #e5e7eb;
+}
+QStatusBar QLabel, QLabel#StatusLabel, QLabel#StatusTag { color: #111827; }
+
+/* Color por defecto para etiquetas */
+QLabel { color: #111827; }
 """
 
 QSS_DARK = """
@@ -193,4 +203,14 @@ QListView::item:selected {
     background: #1f2a44;
     border-radius: 8px;
 }
+/* Status bar */
+QStatusBar {
+    background: #0a0f1a;
+    color: #e5e7eb;
+    border-top: 1px solid #172036;
+}
+QStatusBar QLabel, QLabel#StatusLabel, QLabel#StatusTag { color: #e5e7eb; }
+
+/* Color por defecto para etiquetas */
+QLabel { color: #e5e7eb; }
 """
