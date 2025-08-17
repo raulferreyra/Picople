@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import List
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedWidget, QToolBar, QToolButton, QLabel, QStatusBar
 from PySide6.QtGui import QKeySequence
 
@@ -12,6 +12,8 @@ from picople.app.controllers import MediaNavigator, MediaItem
 
 
 class MediaViewerPanel(QWidget):
+    requestClose = Signal()
+
     def __init__(self, items: List[MediaItem], start_index: int = 0, parent=None):
         super().__init__(parent)
         self.nav = MediaNavigator(items, start_index)
@@ -22,7 +24,7 @@ class MediaViewerPanel(QWidget):
 
         # Toolbar
         self.tb = QToolBar()
-        self.tb.setObjectName("MainToolbar")
+        self.tb.setObjectName("ViewerToolbar")
         self.tb.setMovable(False)
         self.btn_prev = QToolButton()
         self.btn_prev.setText("◀")
@@ -40,11 +42,16 @@ class MediaViewerPanel(QWidget):
         self.btn_rotate.setText("↻")
         self.btn_playpause = QToolButton()
         self.btn_playpause.setText("⏯")
+        self.btn_fav = QToolButton()
+        self.btn_fav.setText("♡")
+        self.btn_fav.setCheckable(True)
+        self.btn_close = QToolButton()
+        self.btn_close.setText("✕")
 
         for b in (self.btn_prev, self.btn_next, self.btn_fit, self.btn_100,
-                  self.btn_zoom_in, self.btn_zoom_out, self.btn_rotate, self.btn_playpause):
+                  self.btn_zoom_in, self.btn_zoom_out, self.btn_rotate, self.btn_playpause,
+                  self.btn_fav, self.btn_close):
             b.setObjectName("ToolbarBtn")
-            self.tb.setObjectName("ViewerToolbar")
             self.tb.addWidget(b)
         root.addWidget(self.tb)
 
@@ -82,6 +89,8 @@ class MediaViewerPanel(QWidget):
         self.btn_zoom_out.clicked.connect(lambda: self._image_action("zout"))
         self.btn_rotate.clicked.connect(lambda: self._image_action("rot"))
         self.btn_playpause.clicked.connect(self._play_pause)
+        self.btn_fav.toggled.connect(self._toggle_fav)
+        self.btn_close.clicked.connect(lambda: self.requestClose.emit())
 
         self._mk_shortcut("Left", self._prev)
         self._mk_shortcut("Right", self._next)
@@ -149,3 +158,7 @@ class MediaViewerPanel(QWidget):
     def _play_pause(self):
         if self.stack.currentIndex() == 1:
             self.video_view.play_pause()
+
+    def _toggle_fav(self, checked: bool):
+        # Solo UI: cambia el iconito
+        self.btn_fav.setText("♥" if checked else "♡")

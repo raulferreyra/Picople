@@ -445,7 +445,6 @@ class MainWindow(QMainWindow):
         self.viewer_overlay.open(media_items, start_index)
 
     def _open_viewer_embedded(self, items: list, start_index: int):
-        from PySide6.QtWidgets import QWidget
         media_items = [MediaItem(path=i["path"], kind=i["kind"], mtime=i["mtime"],
                                  size=i["size"], thumb_path=i.get("thumb_path")) for i in items]
         if self._viewer_page is not None:
@@ -459,8 +458,19 @@ class MainWindow(QMainWindow):
 
         self._viewer_page = MediaViewerPanel(
             media_items, start_index, parent=self)
+        self._viewer_page.requestClose.connect(self._close_viewer_embedded)
         self.stack.addWidget(self._viewer_page)
         self.stack.setCurrentWidget(self._viewer_page)
+
+    def _close_viewer_embedded(self):
+        if self._viewer_page is not None:
+            self.stack.setCurrentWidget(self._pages["collection"])
+            idx = self.stack.indexOf(self._viewer_page)
+            if idx >= 0:
+                w = self.stack.widget(idx)
+                self.stack.removeWidget(w)
+                w.deleteLater()
+            self._viewer_page = None
 
     def closeEvent(self, event) -> None:
         try:

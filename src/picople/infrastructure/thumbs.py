@@ -58,39 +58,35 @@ def video_thumb(src: Path, out_dir: Path, size: int = 320) -> Optional[Path]:
         out_dir.mkdir(parents=True, exist_ok=True)
         out = out_dir / (src.stem + ".jpg")
 
-        # Frame temprano pero no negro: 0.5s
-        # Escalado cuadrado manteniendo aspecto + padding
-        vf = f"scale='iw*min({size}/iw\\,{size}/ih)':'ih*min({size}/iw\\,{size}/ih)',pad={size}:{size}:(ow-iw)/2:(oh-ih)/2:color=0x101418"
+        base_vf = f"scale='iw*min({size}/iw\\,{size}/ih)':'ih*min({size}/iw\\,{size}/ih)',pad={size}:{size}:(ow-iw)/2:(oh-ih)/2:color=0x101418"
 
-        cmd = [
-            "ffmpeg",
-            "-hide_banner", "-loglevel", "error",
-            "-ss", "0.5",
-            "-i", str(src),
-            "-frames:v", "1",
-            "-vf", vf,
-            "-y",
-            str(out)
+        attempts = [
+            # A) Sin -ss, usa 'thumbnail' para elegir un frame representativo
+            ["-hide_banner", "-loglevel", "error",
+             "-i", str(src),
+             "-vf", f"thumbnail,{base_vf}",
+             "-frames:v", "1", "-y", str(out)],
+            # B) Precisión: -ss después del -i (decodifica hasta 1.5s)
+            ["-hide_banner", "-loglevel", "error",
+             "-i", str(src), "-ss", "1.5",
+             "-vf", base_vf,
+             "-frames:v", "1", "-y", str(out)],
+            # C) Rápido: -ss antes del -i (2.0s)
+            ["-hide_banner", "-loglevel", "error",
+             "-ss", "2.0", "-i", str(src),
+             "-vf", base_vf,
+             "-frames:v", "1", "-y", str(out)],
         ]
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL,
-                       stderr=subprocess.DEVNULL)
-        return out if out.exists() else None
+
+        for cmd in attempts:
+            try:
+                subprocess.run(
+                    cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if out.exists() and out.stat().st_size > 0:
+                    return out
+            except Exception:
+                continue
+
+        return None
     except Exception:
-        # intento de fallback (seek después de -i por exactitud)
-        try:
-            vf = f"scale='iw*min({size}/iw\\,{size}/ih)':'ih*min({size}/iw\\,{size}/ih)',pad={size}:{size}:(ow-iw)/2:(oh-ih)/2:color=0x101418"
-            cmd = [
-                "ffmpeg",
-                "-hide_banner", "-loglevel", "error",
-                "-i", str(src),
-                "-ss", "0.5",
-                "-frames:v", "1",
-                "-vf", vf,
-                "-y",
-                str(out)
-            ]
-            subprocess.run(
-                cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return out if out.exists() else None
-        except Exception:
-            return None
+        return None
