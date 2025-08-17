@@ -180,7 +180,7 @@ class MainWindow(QMainWindow):
         self.progress_bg.setRange(0, 0)
         self.progress_bg.hide()
         self.progress_bg.setToolTip("Trabajos en segundo plano")
-        self.progress_main.setTextVisible(False)
+        self.progress_bg.setTextVisible(False)
 
         tag1 = QLabel("Proceso:")
         tag1.setObjectName("StatusTag")
