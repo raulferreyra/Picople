@@ -159,3 +159,12 @@ class CollectionView(SectionView):
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
         except Exception:
             QMessageBox.information(self, "Abrir", f"No se pudo abrir: {path}")
+
+    def apply_runtime_settings(self, cfg: dict):
+        tile = int(cfg.get("collection/tile_size", 160))
+        batch = int(cfg.get("collection/batch", self.batch))
+        self.view.setIconSize(QSize(tile, tile))
+        self.model.set_tile_size(tile)
+        if batch != self.batch:
+            self.batch = batch
+            self.refresh(reset=True)

@@ -1,3 +1,7 @@
 from .MediaListModel import MediaListModel
+from .SystemProbe import ProbeResult
 
-__all__ = ["MediaListModel"]
+__all__ = [
+    "MediaListModel",
+    "ProbeResult",
+]

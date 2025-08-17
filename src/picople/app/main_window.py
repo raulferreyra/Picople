@@ -28,6 +28,7 @@ SECTIONS = [
     ("people", "Personas y mascotas"),
     ("things", "Cosas"),
     ("folders", "Carpetas"),
+    ("settings", "Preferencias"),
 ]
 
 
@@ -114,7 +115,13 @@ class MainWindow(QMainWindow):
             "things":     views.ThingsView(),
             "folders":    views.FoldersView(),
             "search":     views.SearchView(),
+            "settings":   views.SettingsView(self.settings),
         }
+
+        settings_view = self._pages.get("settings")
+        if hasattr(settings_view, "settingsApplied"):
+            settings_view.settingsApplied.connect(self._on_settings_applied)
+
         for key in self._pages:
             self.stack.addWidget(self._pages[key])
 
@@ -228,13 +235,18 @@ class MainWindow(QMainWindow):
                 self, "Picople", "La base de datos no está abierta. Reinicia e ingresa tu clave.")
             return
 
+        thumb_sz = int(self.settings.value("indexer/thumb_size", 320))
+        video_thumbs = str(self.settings.value(
+            "indexer/video_thumbs", "1")) in ("1", "true", "True")
+
         self.btn_update.setEnabled(False)
         self.progress_main.setValue(0)
         self.progress_bg.show()
         self.status_label.setText("Preparando indexación…")
 
         self._index_thread = QThread(self)
-        self._indexer = IndexerWorker(roots, thumb_size=320, db=self._db)
+        self._indexer = IndexerWorker(
+            roots, thumb_size=thumb_sz, db=self._db, allow_video_thumbs=video_thumbs)
         self._indexer.moveToThread(self._index_thread)
 
         self._index_thread.started.connect(self._indexer.run)
@@ -271,6 +283,7 @@ class MainWindow(QMainWindow):
             "people":     QStyle.SP_DirHomeIcon,
             "things":     QStyle.SP_DesktopIcon,
             "folders":    QStyle.SP_DirOpenIcon,
+            "settings":   QStyle.SP_FileDialogDetailedView,
         }
         return style.standardIcon(mapping.get(key, QStyle.SP_FileIcon))
 
@@ -382,6 +395,17 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Backup", f"Error al crear backup: {e}")
 
     # ------------------------ Persistencia ventana ------------------------ #
+
+    def _on_settings_applied(self, cfg: dict):
+        # Persistencia si vino desde "Guardar" ya la maneja la vista.
+        # Aquí aplicamos en caliente lo que sea relevante para vistas vivas.
+        coll = self._pages.get("collection")
+        if hasattr(coll, "apply_runtime_settings"):
+            coll.apply_runtime_settings(cfg)
+
+        # feedback en status
+        self.status_label.setText("Preferencias aplicadas")
+        QTimer.singleShot(1500, lambda: self.status_label.setText("Listo"))
 
     def closeEvent(self, event) -> None:
         try:
