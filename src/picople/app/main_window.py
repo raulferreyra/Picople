@@ -17,6 +17,8 @@ from picople.infrastructure.indexer import IndexerWorker
 from picople.infrastructure.db import Database, DBError
 from pathlib import Path
 from picople.core.paths import app_data_dir
+from picople.app.controllers import MediaItem
+from picople.app.views.ViewerOverlay import ViewerOverlay
 
 
 # ------------------------ Constantes ------------------------ #
@@ -108,6 +110,10 @@ class MainWindow(QMainWindow):
 
         # Centro: páginas
         self.stack = QStackedWidget()
+
+        self.viewer_overlay = ViewerOverlay(parent=self.centralWidget())
+        self.viewer_overlay.hide()
+
         self._pages = {
             "collection": views.CollectionView(db=self._db),
             "favorites":  views.FavoritesView(),
@@ -118,6 +124,10 @@ class MainWindow(QMainWindow):
             "search":     views.SearchView(),
             "settings":   views.SettingsView(self.settings),
         }
+
+        coll = self._pages.get("collection")
+        if hasattr(coll, "openViewer"):
+            coll.openViewer.connect(self._open_viewer_overlay)
 
         settings_view = self._pages.get("settings")
         if hasattr(settings_view, "settingsApplied"):
@@ -425,6 +435,12 @@ class MainWindow(QMainWindow):
         # feedback en status
         self.status_label.setText("Preferencias aplicadas")
         QTimer.singleShot(1500, lambda: self.status_label.setText("Listo"))
+
+    def _open_viewer_overlay(self, items: list, start_index: int):
+        # items ya vienen como dicts del modelo; conviértelos a MediaItem
+        media_items = [MediaItem(path=i["path"], kind=i["kind"], mtime=i["mtime"],
+                                 size=i["size"], thumb_path=i.get("thumb_path")) for i in items]
+        self.viewer_overlay.open(media_items, start_index)
 
     def closeEvent(self, event) -> None:
         try:

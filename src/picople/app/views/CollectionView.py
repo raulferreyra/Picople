@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Optional
 from pathlib import Path
 
-from PySide6.QtCore import QSize, QModelIndex
+from PySide6.QtCore import QSize, QModelIndex, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout, QListView, QComboBox, QLineEdit, QToolButton, QLabel, QMessageBox
 )
@@ -19,6 +19,7 @@ class CollectionView(SectionView):
     Grilla con scroll infinito leyendo desde la DB cifrada.
     Filtros: Todo/Fotos/Videos + búsqueda por texto (ruta/nombre).
     """
+    openViewer = Signal(list, int)
 
     def __init__(self, db: Optional[Database] = None):
         super().__init__("Colección", "Todas tus fotos y videos en una grilla rápida.", compact=True)
@@ -174,19 +175,16 @@ class CollectionView(SectionView):
     def _open_selected(self, index: QModelIndex):
         if not index.isValid():
             return
-        # Construye la lista MediaItem a partir del modelo visible
         items = []
         for it in self.model.items:
-            items.append(MediaItem(
-                path=it["path"],
-                kind=it["kind"],
-                mtime=it["mtime"],
-                size=it["size"],
-                thumb_path=it.get("thumb_path"),
-            ))
-        start_idx = index.row()
-        dlg = MediaViewer(items, start_idx, parent=self.window())
-        dlg.exec()
+            items.append({
+                "path": it["path"],
+                "kind": it["kind"],
+                "mtime": it["mtime"],
+                "size": it["size"],
+                "thumb_path": it.get("thumb_path")
+            })
+        self.openViewer.emit(items, index.row())
 
     def apply_runtime_settings(self, cfg: dict):
         tile = int(cfg.get("collection/tile_size", 160))
