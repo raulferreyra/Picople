@@ -108,6 +108,7 @@ QStatusBar QLabel, QLabel#StatusLabel, QLabel#StatusTag { color: #111827; }
 
 /* Color por defecto para etiquetas */
 QLabel { color: #111827; }
+#SectionSeparator { background: #e5e7eb; }
 """
 
 QSS_DARK = """
@@ -213,4 +214,5 @@ QStatusBar QLabel, QLabel#StatusLabel, QLabel#StatusTag { color: #e5e7eb; }
 
 /* Color por defecto para etiquetas */
 QLabel { color: #e5e7eb; }
+#SectionSeparator { background: #172036; }
 """
