@@ -1,7 +1,5 @@
 from .MediaListModel import MediaListModel
-from .SystemProbe import ProbeResult
+from .SystemProbe import SystemProbe
+from .ProbeResult import ProbeResult
 
-__all__ = [
-    "MediaListModel",
-    "ProbeResult",
-]
+__all__ = ["MediaListModel", "SystemProbe", "ProbeResult"]

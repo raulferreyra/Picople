@@ -1,17 +1,14 @@
 from __future__ import annotations
 from typing import Optional
-from dataclasses import asdict
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSettings
 from PySide6.QtWidgets import (
     QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, QSpinBox, QCheckBox,
     QComboBox, QToolButton, QMessageBox
 )
-
 from PySide6.QtGui import QFontMetrics
 
-from PySide6.QtCore import QSettings
-from picople.app.controllers import read_hardware, ProbeResult
+from picople.app.controllers import SystemProbe, ProbeResult
 from .SectionView import SectionView
 
 
@@ -120,12 +117,12 @@ class SettingsView(SectionView):
         lay.addSpacing(8)
         lay.addLayout(row_btns)
 
-        # Leer hardware al entrar (opcional: comentar si no quieres auto)
+        # Leer hardware al entrar (opcional)
         self._on_probe()
 
     # ---------- Slots ----------
     def _on_probe(self):
-        pr: ProbeResult = read_hardware()
+        pr: ProbeResult = SystemProbe.read()
         providers = ", ".join(
             pr.onnx_providers) if pr.onnx_providers else "N/D"
         gpu_name = pr.nvidia_name or (
@@ -137,8 +134,6 @@ class SettingsView(SectionView):
             + f"\nffmpeg: {'sí' if pr.has_ffmpeg else 'no'}  •  HEIC: {'sí' if pr.heic_supported else 'no'}"
         )
         self.lbl_hw.setText(txt)
-
-        # Guardamos sugerencias para usar en el botón
         self._last_suggested = pr.suggested
 
     def _on_suggest(self):
@@ -149,7 +144,6 @@ class SettingsView(SectionView):
             QMessageBox.information(
                 self, "Preferencias", "No se pudo generar sugerencia.")
             return
-        # Aplicar a los controles
         self.sp_idx_thumb.setValue(
             int(sug.get("indexer/thumb_size", self.sp_idx_thumb.value())))
         self.cb_video_thumbs.setChecked(
