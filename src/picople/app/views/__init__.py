@@ -7,6 +7,7 @@ from .AlbumsView import AlbumsView
 from .PeopleView import PeopleView
 from .ThingsView import ThingsView
 from .SearchView import SearchView
+from .SettingsView import SettingsView
 
 __all__ = [
     "SectionView",
@@ -17,4 +18,5 @@ __all__ = [
     "PeopleView",
     "ThingsView",
     "SearchView",
+    "SettingsView",
 ]
