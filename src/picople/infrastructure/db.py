@@ -147,3 +147,54 @@ class Database:
         cur.execute("SELECT sqlcipher_export('backup');")
         cur.execute("DETACH DATABASE backup;")
         self.conn.commit()
+
+        # ---------------- Consultas de lectura ---------------- #
+    def _build_where(self, kind: str | None, search: str | None) -> tuple[str, list]:
+        clauses = []
+        args: list = []
+        if kind in ("image", "video"):
+            clauses.append("kind = ?")
+            args.append(kind)
+        if search:
+            clauses.append("(path LIKE ?)")
+            args.append(f"%{search}%")
+        if clauses:
+            return "WHERE " + " AND ".join(clauses), args
+        return "", args
+
+    def count_media(self, kind: str | None = None, search: str | None = None) -> int:
+        cur = self.conn.cursor()
+        where, args = self._build_where(kind, search)
+        cur.execute(f"SELECT COUNT(*) FROM media {where};", args)
+        row = cur.fetchone()
+        return int(row[0] if row and row[0] is not None else 0)
+
+    def fetch_media_page(
+        self,
+        offset: int,
+        limit: int,
+        kind: str | None = None,      # 'image' | 'video' | None (todos)
+        search: str | None = None,    # filtro por substring en path
+        order_by: str = "mtime DESC",
+    ) -> list[dict]:
+        cur = self.conn.cursor()
+        where, args = self._build_where(kind, search)
+        cur.execute(
+            f"""SELECT path, kind, mtime, size, thumb_path
+                FROM media
+                {where}
+                ORDER BY {order_by}
+                LIMIT ? OFFSET ?;""",
+            [*args, int(limit), int(offset)],
+        )
+        rows = cur.fetchall()
+        out = []
+        for r in rows:
+            out.append({
+                "path": r[0],
+                "kind": r[1],
+                "mtime": int(r[2]),
+                "size": int(r[3]),
+                "thumb_path": r[4],
+            })
+        return out
