@@ -23,6 +23,7 @@ pytest==8.4.1
 PyYAML==6.0.2
 ruff==0.12.9
 shiboken6==6.9.1
+sqlcipher3-wheels==0.5.5
 typing-inspection==0.4.1
 typing_extensions==4.14.1
 win32_setctime==1.2.0
