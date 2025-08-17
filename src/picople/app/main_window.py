@@ -135,6 +135,12 @@ class MainWindow(QMainWindow):
         self.btn_update.setText("Actualizar")
         self.btn_update.clicked.connect(self._on_update)
 
+        self.btn_backup = QToolButton()
+        self.btn_backup.setObjectName("ToolbarBtn")
+        self.btn_backup.setText("Backup")
+        self.btn_backup.setToolTip("Crear copia cifrada de la base de datos")
+        self.btn_backup.clicked.connect(self._on_backup)
+
         self.btn_theme = QToolButton()
         self.btn_theme.setObjectName("ToolbarBtn")
         self.btn_theme.setToolTip("Alternar tema")
@@ -150,6 +156,7 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(self.btn_update)
         self.toolbar.addWidget(spacer)
         self.toolbar.addWidget(self.btn_theme)
+        self.toolbar.addWidget(self.btn_backup)
 
         # Ensamblar
         layout.addWidget(self.sidebar)
@@ -212,19 +219,20 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self, "Picople", "No hay carpetas configuradas. Ve a 'Carpetas' para agregar.")
             return
+        if not self._db or not self._db.is_open:
+            QMessageBox.warning(
+                self, "Picople", "La base de datos no está abierta. Reinicia e ingresa tu clave.")
+            return
 
-        # Deshabilitar boton mientras corre
         self.btn_update.setEnabled(False)
         self.progress_main.setValue(0)
         self.progress_bg.show()
         self.status_label.setText("Preparando indexación…")
 
-        # Hilo + worker
         self._index_thread = QThread(self)
-        self._indexer = IndexerWorker(roots, thumb_size=320)
+        self._indexer = IndexerWorker(roots, thumb_size=320, db=self._db)
         self._indexer.moveToThread(self._index_thread)
 
-        # Conexiones
         self._index_thread.started.connect(self._indexer.run)
         self._indexer.started.connect(self._on_index_started)
         self._indexer.progress.connect(self._on_index_progress)
@@ -232,8 +240,6 @@ class MainWindow(QMainWindow):
         self._indexer.error.connect(self._on_index_error)
         self._indexer.finished.connect(self._on_index_finished)
         self._indexer.finished.connect(self._index_thread.quit)
-
-        # Limpieza al terminar
         self._index_thread.finished.connect(self._indexer.deleteLater)
         self._index_thread.finished.connect(self._index_thread.deleteLater)
 
@@ -349,6 +355,27 @@ class MainWindow(QMainWindow):
             except DBError as e:
                 QMessageBox.critical(self, "Picople", str(e))
                 self._db = None
+
+    def _on_backup(self):
+        if not self._db or not self._db.is_open:
+            QMessageBox.warning(
+                self, "Picople", "La base de datos no está abierta.")
+            return
+        dest, ok = QFileDialog.getSaveFileName(
+            self, "Guardar backup cifrado", "picople-backup.db", "Bases de datos (*.db)")
+        if not ok or not dest:
+            return
+        # Pedir passphrase para el backup (puede ser la misma u otra)
+        pw, ok2 = QInputDialog.getText(
+            self, "Clave de backup", "Clave para el archivo de backup:", echo=QLineEdit.Password)
+        if not ok2 or not pw:
+            return
+        try:
+            self._db.backup_to(Path(dest), pw)
+            QMessageBox.information(
+                self, "Backup", "Backup cifrado creado correctamente.")
+        except Exception as e:
+            QMessageBox.critical(self, "Backup", f"Error al crear backup: {e}")
 
     # ------------------------ Persistencia ventana ------------------------ #
 
