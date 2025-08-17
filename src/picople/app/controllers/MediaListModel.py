@@ -56,6 +56,13 @@ class MediaListModel(QAbstractListModel):
         self.items = items
         self.endResetModel()
 
+    def append_items(self, items: List[Dict]) -> None:
+        if not items:
+            return
+        start = len(self.items)
+        self.beginInsertRows(QModelIndex(), start, start + len(items) - 1)
+        self.items.extend(items)
+        self.endInsertRows()
+
     def set_tile_size(self, size: int) -> None:
-        self.tile_size = size
-        # no hacemos reset completo; los iconos escalan al pedirse
+        self.tile_size = size  # los iconos se reescalan al pedirse

@@ -68,6 +68,36 @@ QListWidget::item:selected {
     background: #e5efff;
     border-radius: 8px;
 }
+QComboBox#FilterCombo {
+    padding: 6px 10px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #111827;
+    min-height: 30px;
+}
+QComboBox#FilterCombo::drop-down { border: none; }
+QToolButton#FilterBtn {
+    padding: 8px 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #111827;
+    min-height: 30px;
+}
+QToolButton#FilterBtn:hover { background: #f3f4f6; }
+
+/* Grilla Collection (igual look que Folders) */
+QListView {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+}
+QListView::item { color: #111827; }
+QListView::item:selected {
+    background: #e5efff;
+    border-radius: 8px;
+}
 """
 
 QSS_DARK = """
@@ -130,6 +160,36 @@ QListWidget {
 }
 QListWidget::item { color: #e5e7eb; }
 QListWidget::item:selected {
+    background: #1f2a44;
+    border-radius: 8px;
+}
+QComboBox#FilterCombo {
+    padding: 6px 10px;
+    border: 1px solid #172036;
+    border-radius: 8px;
+    background: #0b1220;
+    color: #e5e7eb;
+    min-height: 30px;
+}
+QComboBox#FilterCombo::drop-down { border: none; }
+QToolButton#FilterBtn {
+    padding: 8px 12px;
+    border: 1px solid #172036;
+    border-radius: 8px;
+    background: #0b1220;
+    color: #e5e7eb;
+    min-height: 30px;
+}
+QToolButton#FilterBtn:hover { background: #101a2e; }
+
+/* Grilla Collection (igual look que Folders) */
+QListView {
+    background: #0b1220;
+    border: 1px solid #172036;
+    border-radius: 8px;
+}
+QListView::item { color: #e5e7eb; }
+QListView::item:selected {
     background: #1f2a44;
     border-radius: 8px;
 }

@@ -15,47 +15,42 @@ from .SectionView import SectionView
 
 class CollectionView(SectionView):
     """
-    Grilla paginada de miniaturas leyendo desde la DB cifrada.
+    Grilla con scroll infinito leyendo desde la DB cifrada.
     Filtros: Todo/Fotos/Videos + búsqueda por texto (ruta/nombre).
     """
 
     def __init__(self, db: Optional[Database] = None):
-        super().__init__("Colección", "Todas tus fotos y videos en una grilla rápida.")
+        super().__init__("Colección", "Todas tus fotos y videos en una grilla rápida.", compact=True)
         self.db = db
 
-        # Controles de filtro/paginación
+        # Controles de filtro (con estilos por tema mediante objectName)
         row = QHBoxLayout()
         row.setSpacing(8)
 
         self.cmb_kind = QComboBox()
+        self.cmb_kind.setObjectName("FilterCombo")
         self.cmb_kind.addItems(["Todo", "Fotos", "Videos"])
         self.cmb_kind.setToolTip("Filtrar por tipo")
 
         self.txt_search = QLineEdit()
+        self.txt_search.setObjectName("SearchEdit")
         self.txt_search.setPlaceholderText("Filtrar por texto en ruta/nombre…")
         self.txt_search.setClearButtonEnabled(True)
-        self.txt_search.setObjectName("SearchEdit")
 
-        self.btn_prev = QToolButton()
-        self.btn_prev.setText("◀")
-        self.btn_prev.setToolTip("Página anterior")
-        self.lbl_page = QLabel("Página 1/1")
-        self.lbl_page.setObjectName("StatusTag")
-        self.btn_next = QToolButton()
-        self.btn_next.setText("▶")
-        self.btn_next.setToolTip("Página siguiente")
         self.btn_reload = QToolButton()
+        self.btn_reload.setObjectName("FilterBtn")
         self.btn_reload.setText("Recargar")
         self.btn_reload.setToolTip("Recargar resultados")
 
+        self.lbl_info = QLabel("")
+        self.lbl_info.setObjectName("StatusTag")
+
         row.addWidget(self.cmb_kind)
         row.addWidget(self.txt_search, 1)
-        row.addWidget(self.btn_prev)
-        row.addWidget(self.lbl_page)
-        row.addWidget(self.btn_next)
         row.addWidget(self.btn_reload)
+        row.addWidget(self.lbl_info)
 
-        # Lista en modo iconos
+        # Lista en modo iconos (mismo look que 'Carpetas' por QSS)
         self.view = QListView()
         self.view.setViewMode(QListView.IconMode)
         self.view.setWrapping(True)
@@ -69,26 +64,25 @@ class CollectionView(SectionView):
         self.model = MediaListModel(tile_size=160)
         self.view.setModel(self.model)
 
-        # Integrar al layout de SectionView
         lay = self.layout()
         lay.addLayout(row)
         lay.addWidget(self.view, 1)
 
-        # Estado
-        self.page_size = 200
-        self.page = 1
+        # Estado: scroll infinito
+        self.batch = 200
+        self.offset = 0
+        self.loading = False
+        self.has_more = True
         self.total = 0
-        self.total_pages = 1
 
         # Señales
         self.cmb_kind.currentIndexChanged.connect(self._on_filters_changed)
         self.txt_search.returnPressed.connect(self._on_filters_changed)
         self.btn_reload.clicked.connect(self._on_filters_changed)
-        self.btn_prev.clicked.connect(self._prev_page)
-        self.btn_next.clicked.connect(self._next_page)
+        self.view.verticalScrollBar().valueChanged.connect(self._maybe_fetch_more)
 
         # Carga inicial
-        self.refresh()
+        self.refresh(reset=True)
 
     # -------- Lógica -------- #
     def _current_kind(self) -> Optional[str]:
@@ -96,39 +90,65 @@ class CollectionView(SectionView):
         return {0: None, 1: "image", 2: "video"}.get(i, None)
 
     def _on_filters_changed(self):
-        self.page = 1
-        self.refresh()
+        self.refresh(reset=True)
 
-    def _prev_page(self):
-        if self.page > 1:
-            self.page -= 1
-            self.refresh()
-
-    def _next_page(self):
-        if self.page < self.total_pages:
-            self.page += 1
-            self.refresh()
-
-    def refresh(self):
+    def refresh(self, *, reset: bool = False):
         if not self.db or not self.db.is_open:
             self.model.set_items([])
-            self.lbl_page.setText("DB no abierta")
+            self.lbl_info.setText("DB no abierta")
             return
 
+        if reset:
+            self.offset = 0
+            self.has_more = True
+            self.loading = False
+            self.total = self.db.count_media(
+                kind=self._current_kind(), search=self._search_text())
+            self.model.set_items([])
+
+        # primera carga
+        self._fetch_more(initial=True)
+
+    def _fetch_more(self, initial: bool = False):
+        if self.loading or not self.has_more:
+            return
+        self.loading = True
+
         kind = self._current_kind()
-        search = self.txt_search.text().strip() or None
-
-        self.total = self.db.count_media(kind=kind, search=search)
-        self.total_pages = max(
-            1, (self.total + self.page_size - 1) // self.page_size)
-        self.page = max(1, min(self.page, self.total_pages))
-        offset = (self.page - 1) * self.page_size
-
         items = self.db.fetch_media_page(
-            offset, self.page_size, kind=kind, search=search, order_by="mtime DESC")
-        self.model.set_items(items)
-        self.lbl_page.setText(
-            f"Página {self.page}/{self.total_pages}  •  {self.total} items")
+            offset=self.offset,
+            limit=self.batch,
+            kind=kind,
+            search=self._search_text(),
+            order_by="mtime DESC",
+        )
+        self.offset += len(items)
+        # si trajo lote completo, probablemente hay más
+        self.has_more = len(items) == self.batch
+
+        if initial:
+            self.model.set_items(items)
+        else:
+            self.model.append_items(items)
+
+        # info
+        shown = len(self.model.items)
+        if self.total:
+            self.lbl_info.setText(f"Mostrando {shown}/{self.total}")
+        else:
+            self.lbl_info.setText(f"Mostrando {shown}")
+
+        self.loading = False
+
+    def _maybe_fetch_more(self, value: int):
+        sb = self.view.verticalScrollBar()
+        # cuando estamos cerca del fondo (a 80px)
+        if sb.maximum() - value <= 80:
+            self._fetch_more(initial=False)
+
+    def _search_text(self) -> Optional[str]:
+        t = self.txt_search.text().strip()
+        return t or None
 
     def _open_selected(self, index: QModelIndex):
         if not index.isValid():
