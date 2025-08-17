@@ -9,7 +9,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QDesktopServices
 
 from picople.infrastructure.db import Database
-from picople.app.controllers import MediaListModel
+from picople.app.controllers import MediaListModel, MediaItem
+from .MediaViewer import MediaViewer
 from .SectionView import SectionView
 
 
@@ -153,12 +154,19 @@ class CollectionView(SectionView):
     def _open_selected(self, index: QModelIndex):
         if not index.isValid():
             return
-        item = self.model.items[index.row()]
-        path = item["path"]
-        try:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
-        except Exception:
-            QMessageBox.information(self, "Abrir", f"No se pudo abrir: {path}")
+        # Construye la lista MediaItem a partir del modelo visible
+        items = []
+        for it in self.model.items:
+            items.append(MediaItem(
+                path=it["path"],
+                kind=it["kind"],
+                mtime=it["mtime"],
+                size=it["size"],
+                thumb_path=it.get("thumb_path"),
+            ))
+        start_idx = index.row()
+        dlg = MediaViewer(items, start_idx, parent=self.window())
+        dlg.exec()
 
     def apply_runtime_settings(self, cfg: dict):
         tile = int(cfg.get("collection/tile_size", 160))

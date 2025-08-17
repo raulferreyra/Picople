@@ -8,6 +8,9 @@ from .PeopleView import PeopleView
 from .ThingsView import ThingsView
 from .SearchView import SearchView
 from .SettingsView import SettingsView
+from .MediaViewer import MediaViewer
+from .ImageView import ImageView
+from .VideoView import VideoView
 
 __all__ = [
     "SectionView",
@@ -19,4 +22,7 @@ __all__ = [
     "ThingsView",
     "SearchView",
     "SettingsView",
+    "MediaViewer",
+    "ImageView",
+    "VideoView",
 ]
