@@ -11,6 +11,8 @@ from .SettingsView import SettingsView
 from .MediaViewer import MediaViewer
 from .ImageView import ImageView
 from .VideoView import VideoView
+from .MediaViewerPanel import MediaViewerPanel
+from .ViewerOverlay import ViewerOverlay
 
 __all__ = [
     "SectionView",
@@ -25,4 +27,6 @@ __all__ = [
     "MediaViewer",
     "ImageView",
     "VideoView",
+    "MediaViewerPanel",
+    "ViewerOverlay",
 ]

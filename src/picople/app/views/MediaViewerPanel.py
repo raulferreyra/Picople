@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import List
 from pathlib import Path
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedWidget, QToolBar, QToolButton, QLabel, QStatusBar
 from PySide6.QtGui import QKeySequence
@@ -14,12 +15,12 @@ class MediaViewerPanel(QWidget):
     def __init__(self, items: List[MediaItem], start_index: int = 0, parent=None):
         super().__init__(parent)
         self.nav = MediaNavigator(items, start_index)
-        self._fullscreen = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
+        # Toolbar
         self.tb = QToolBar()
         self.tb.setObjectName("MainToolbar")
         self.tb.setMovable(False)
@@ -39,14 +40,17 @@ class MediaViewerPanel(QWidget):
         self.btn_rotate.setText("↻")
         self.btn_playpause = QToolButton()
         self.btn_playpause.setText("⏯")
-        for b in (self.btn_prev, self.btn_next, self.btn_fit, self.btn_100, self.btn_zoom_in, self.btn_zoom_out, self.btn_rotate, self.btn_playpause):
+
+        for b in (self.btn_prev, self.btn_next, self.btn_fit, self.btn_100,
+                  self.btn_zoom_in, self.btn_zoom_out, self.btn_rotate, self.btn_playpause):
             self.tb.addWidget(b)
         root.addWidget(self.tb)
 
+        # Contenido
         self.stack = QStackedWidget()
         self.image_view = ImageView()
         self.video_view = VideoView()
-        from PySide6.QtWidgets import QVBoxLayout, QWidget
+
         page_img = QWidget()
         li = QVBoxLayout(page_img)
         li.setContentsMargins(0, 0, 0, 0)
@@ -55,16 +59,19 @@ class MediaViewerPanel(QWidget):
         lv = QVBoxLayout(page_vid)
         lv.setContentsMargins(0, 0, 0, 0)
         lv.addWidget(self.video_view)
+
         self.stack.addWidget(page_img)
         self.stack.addWidget(page_vid)
         root.addWidget(self.stack, 1)
 
+        # Status
         self.status = QStatusBar()
         self.lbl_status = QLabel("Listo")
         self.lbl_status.setObjectName("StatusLabel")
         self.status.addWidget(self.lbl_status, 1)
         root.addWidget(self.status)
 
+        # Conexiones
         self.btn_prev.clicked.connect(self._prev)
         self.btn_next.clicked.connect(self._next)
         self.btn_fit.clicked.connect(lambda: self._image_action("fit"))
@@ -83,13 +90,10 @@ class MediaViewerPanel(QWidget):
         self._mk_shortcut("Ctrl+=", lambda: self._image_action("zin"))
         self._mk_shortcut("Ctrl+-", lambda: self._image_action("zout"))
         self._mk_shortcut("R", lambda: self._image_action("rot"))
-        self._mk_shortcut("Esc", lambda: self.parent().hide()
-                          if self.parent() else None)
 
         self._load_current()
 
     def _mk_shortcut(self, seq: str, fn):
-        from PySide6.QtWidgets import QToolButton
         btn = QToolButton(self)
         btn.setShortcut(QKeySequence(seq))
         btn.clicked.connect(fn)
