@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Optional
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QPoint
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QScrollArea, QLabel
 
@@ -13,15 +13,23 @@ from PIL import Image, ImageOps
 
 
 def _pil_to_qimage(pil_img: Image.Image) -> QImage:
-    if pil_img.mode not in ("RGB", "RGBA"):
-        pil_img = pil_img.convert("RGBA")
-    data = pil_img.tobytes("raw", pil_img.mode)
+    # Normaliza a RGB(A) y calcula stride (bytesPerLine)
     if pil_img.mode == "RGBA":
+        data = pil_img.tobytes("raw", "RGBA")
+        bpl = pil_img.width * 4
         qimg = QImage(data, pil_img.width, pil_img.height,
-                      QImage.Format_RGBA8888)
-    else:  # RGB
+                      bpl, QImage.Format_RGBA8888)
+    elif pil_img.mode == "RGB":
+        data = pil_img.tobytes("raw", "RGB")
+        bpl = pil_img.width * 3
         qimg = QImage(data, pil_img.width, pil_img.height,
-                      QImage.Format_RGB888)
+                      bpl, QImage.Format_RGB888)
+    else:
+        pil_img = pil_img.convert("RGBA")
+        data = pil_img.tobytes("raw", "RGBA")
+        bpl = pil_img.width * 4
+        qimg = QImage(data, pil_img.width, pil_img.height,
+                      bpl, QImage.Format_RGBA8888)
     return qimg.copy()
 
 
@@ -36,7 +44,12 @@ class ImageView(QScrollArea):
         self._orig: Optional[QImage] = None
         self._zoom = 1.0
         self._fit = True
-        self._rotation = 0  # grados 0/90/180/270
+        self._rotation = 0
+        # pan con arrastre
+        self._panning = False
+        self._pan_start = QPoint(0, 0)
+        self._h0 = 0
+        self._v0 = 0
 
     def load_path(self, path: str) -> bool:
         try:
@@ -91,19 +104,15 @@ class ImageView(QScrollArea):
             return
         img = self._orig
 
-        # rotación
+        # rotación con QTransform y stride correcto
         if self._rotation:
-            transform = QImage(img)
-            if self._rotation == 90:
-                img = transform.transformed(self._rot_matrix(90))
-            elif self._rotation == 180:
-                img = transform.transformed(self._rot_matrix(180))
-            elif self._rotation == 270:
-                img = transform.transformed(self._rot_matrix(270))
+            from PySide6.QtGui import QTransform
+            tr = QTransform()
+            tr.rotate(self._rotation)
+            img = img.transformed(tr, Qt.SmoothTransformation)
 
         pm = QPixmap.fromImage(img)
         if self._fit:
-            # escalar a viewport manteniendo aspecto
             avail = self.viewport().size()
             if not pm.isNull():
                 pm = pm.scaled(avail.width(), avail.height(),
@@ -132,6 +141,43 @@ class ImageView(QScrollArea):
             e.accept()
         else:
             super().wheelEvent(e)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton and not self._fit and self._label.pixmap() and not self._label.pixmap().isNull():
+            self._panning = True
+            self._pan_start = e.pos()
+            self._h0 = self.horizontalScrollBar().value()
+            self._v0 = self.verticalScrollBar().value()
+            self.setCursor(Qt.ClosedHandCursor)
+            e.accept()
+        else:
+            super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if self._panning:
+            dx = e.pos().x() - self._pan_start.x()
+            dy = e.pos().y() - self._pan_start.y()
+            self.horizontalScrollBar().setValue(self._h0 - dx)
+            self.verticalScrollBar().setValue(self._v0 - dy)
+            e.accept()
+        else:
+            super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        if self._panning and e.button() == Qt.LeftButton:
+            self._panning = False
+            self.setCursor(Qt.ArrowCursor)
+            e.accept()
+        else:
+            super().mouseReleaseEvent(e)
+
+    def mouseDoubleClickEvent(self, e):
+        # doble clic: alterna ajustar/100%
+        if self._fit:
+            self.zoom_reset()
+        else:
+            self.set_fit_to_window(True)
+        e.accept()
 
     @staticmethod
     def _rot_matrix(deg: int):
