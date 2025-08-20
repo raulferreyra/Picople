@@ -110,6 +110,8 @@ QStatusBar QLabel, QLabel#StatusLabel, QLabel#StatusTag { color: #111827; }
 QLabel { color: #111827; }
 #SectionSeparator { background: #e5e7eb; }
 QToolBar#MainToolbar { border-bottom: 1px solid rgba(0,0,0,0.05); }
+QSlider#MediaSlider::groove:horizontal { height:6px; background:#e1e5ea; border-radius:3px; }
+QSlider#MediaSlider::handle:horizontal { width:12px; margin:-4px 0; border-radius:6px; background:#3b77ff; }
 """
 
 QSS_DARK = """
@@ -217,4 +219,6 @@ QStatusBar QLabel, QLabel#StatusLabel, QLabel#StatusTag { color: #e5e7eb; }
 QLabel { color: #e5e7eb; }
 #SectionSeparator { background: #172036; }
 QToolBar#MainToolbar { border-bottom: 1px solid #172036; }
+QSlider#MediaSlider::groove:horizontal { height:6px; background:#2a2c31; border-radius:3px; }
+QSlider#MediaSlider::handle:horizontal { width:12px; margin:-4px 0; border-radius:6px; background:#6aa0ff; }
 """
