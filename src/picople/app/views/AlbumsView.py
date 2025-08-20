@@ -1,189 +1,195 @@
-# src/picople/app/views/AlbumsView.py
 from __future__ import annotations
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from PySide6.QtCore import Qt, QSize, QModelIndex
-from PySide6.QtGui import QIcon, QPixmap, QStandardItem, QStandardItemModel
+from PySide6.QtGui import QIcon, QPixmap, QStandardItem, QStandardItemModel, QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListView, QToolButton, QLabel,
     QStackedWidget, QInputDialog, QMessageBox, QStyle
 )
 
-from picople.infrastructure.db import Database, DBError
-from .SectionView import SectionView
-from .ThumbDelegate import ThumbDelegate
-from .CollectionView import CollectionView
+from picople.infrastructure.db import Database
+from picople.app.views.SectionView import SectionView
+from picople.app.views.CollectionView import CollectionView
+from picople.app.views.AlbumDetailView import AlbumDetailView
 
 
-ALBUM_ID_ROLE = Qt.UserRole + 50
+# almacena dict {'id':int|None, 'title':str, 'is_fav':bool}
+ROLE_DATA = Qt.UserRole + 100
 
 
 class AlbumsView(SectionView):
-    """
-    Vista de Álbumes:
-      - Página 1: grilla de álbumes (portada + título + contador)
-      - Página 2: detalle del álbum (CollectionView restringida a album_id)
-        con botón < Volver y lápiz para editar el título.
-    """
-
     def __init__(self, db: Optional[Database] = None):
         super().__init__("Álbumes", "Organizados automáticamente por carpetas.", compact=True)
         self.db = db
 
-        self.inner = QStackedWidget()
-        self.content_layout.addWidget(self.inner, 1)
+        self.stack = QStackedWidget()
+        self._page_list = QWidget()
+        self._page_detail = QWidget()
 
-        # ---------- Página grilla ----------
-        page_grid = QWidget()
-        lg = QVBoxLayout(page_grid)
-        lg.setContentsMargins(0, 0, 0, 0)
+        self._build_list_page()
+        self._build_detail_page()
+
+        self.stack.addWidget(self._page_list)   # idx 0
+        self.stack.addWidget(self._page_detail)  # idx 1
+
+        lay = self.content_layout
+        lay.addWidget(self.stack, 1)
+
+        self._reload_list()
+
+    # ───────────────── Página: lista ─────────────────
+    def _build_list_page(self):
+        root = QVBoxLayout(self._page_list)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(10)
+
         self.list = QListView()
         self.list.setViewMode(QListView.IconMode)
-        self.list.setWrapping(True)
+        self.list.setSpacing(16)
         self.list.setResizeMode(QListView.Adjust)
         self.list.setMovement(QListView.Static)
-        self.list.setSpacing(12)
-        self.list.setIconSize(QSize(160, 160))
+        self.list.setIconSize(QSize(192, 192))
         self.list.setUniformItemSizes(False)
+        self.list.doubleClicked.connect(self._open_album)
 
         self.model = QStandardItemModel(self.list)
         self.list.setModel(self.model)
-        self.list.setItemDelegate(ThumbDelegate(
-            tile=160, text_lines=2, parent=self.list))
-        self.list.doubleClicked.connect(self._open_selected)
+        root.addWidget(self.list, 1)
 
-        lg.addWidget(self.list, 1)
-        self.inner.addWidget(page_grid)       # index 0
+    def _reload_list(self):
+        self.model.clear()
+        if not self.db or not self.db.is_open:
+            return
 
-        # ---------- Página detalle ----------
-        page_detail = QWidget()
-        ld = QVBoxLayout(page_detail)
-        ld.setContentsMargins(0, 0, 0, 0)
+        # “Favoritos” virtual
+        fav_count = self.db.count_media(favorites_only=True)
+        if fav_count > 0:
+            last = self.db.fetch_media_page(
+                offset=0, limit=1, favorites_only=True, order_by="mtime DESC")
+            cover = (last[0].get("thumb_path")
+                     or last[0].get("path")) if last else None
+            pm = QPixmap(cover) if cover else QPixmap()
+            it = QStandardItem(QIcon(pm), f"Favoritos  ({fav_count})")
+            it.setData({"id": None, "title": "Favoritos",
+                       "is_fav": True}, ROLE_DATA)
+            it.setEditable(False)
+            it.setForeground(QColor("#e6e8ee"))  # texto visible en tema oscuro
+            self.model.appendRow(it)
 
-        # Barra superior: < Volver | Título | ✎ Editar
-        bar = QHBoxLayout()
-        bar.setContentsMargins(8, 8, 8, 8)
-        bar.setSpacing(8)
+        # Álbumes reales
+        for a in self.db.list_albums():
+            title = a["title"]
+            count = a["count"]
+            cover = a.get("cover_path")
+            pm = QPixmap(cover) if cover else QPixmap()
+            it = QStandardItem(QIcon(pm), f"{title}  ({count})")
+            it.setData({"id": a["id"], "title": title,
+                       "is_fav": False}, ROLE_DATA)
+            it.setEditable(False)
+            it.setForeground(QColor("#e6e8ee"))
+            self.model.appendRow(it)
+
+        # grid agradable a texto: alto para título+conteo
+        fm = self.list.fontMetrics()
+        tile = 192
+        cell_h = 12 + tile + 8 + fm.height() + 8
+        cell_w = 10 + tile + 10
+        self.list.setGridSize(QSize(cell_w, int(cell_h)))
+
+    def _open_album(self, idx: QModelIndex):
+        data: Dict[str, Any] = idx.data(ROLE_DATA)
+        if not data:
+            return
+        if data.get("is_fav"):
+            # colección filtrada a favoritos
+            self._show_detail(
+                CollectionView(
+                    db=self.db,
+                    title="Favoritos",
+                    subtitle="Tus elementos favoritos.",
+                    favorites_only=True,
+                    album_id=None,
+                ),
+                title="Favoritos",
+                allow_rename=False,
+            )
+        else:
+            album_id = data["id"]
+            title = data["title"]
+            view = AlbumDetailView(self.db, album_id, title)
+            view.coverChanged.connect(lambda _id, _p: self._reload_list())
+            self._show_detail(view, title=title,
+                              allow_rename=True, album_id=album_id)
+
+    # ───────────────── Página: detalle ─────────────────
+    def _build_detail_page(self):
+        root = QVBoxLayout(self._page_detail)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(8)
+
+        # header con back + título + (opcional) lápiz
+        hdr = QHBoxLayout()
+        hdr.setContentsMargins(0, 0, 0, 0)
+        hdr.setSpacing(8)
 
         self.btn_back = QToolButton()
-        self.btn_back.setText("◀")
         self.btn_back.setObjectName("ToolbarBtn")
-        self.btn_back.clicked.connect(self._go_back)
+        self.btn_back.setIcon(self.style().standardIcon(QStyle.SP_ArrowBack))
+        self.btn_back.clicked.connect(lambda: self.stack.setCurrentIndex(0))
 
-        self.lbl_album_title = QLabel("")
-        self.lbl_album_title.setObjectName("AppTitle")
+        self.lbl_title = QLabel("")
+        self.lbl_title.setObjectName(
+            "AlbumHeaderTitle")  # QSS lo pintará legible
 
-        self.btn_edit = QToolButton()
-        self.btn_edit.setText("✎")
-        self.btn_edit.setObjectName("ToolbarBtn")
-        self.btn_edit.clicked.connect(self._edit_title)
+        self.btn_rename = QToolButton()
+        self.btn_rename.setObjectName("ToolbarBtn")
+        self.btn_rename.setText("✎")
+        self.btn_rename.clicked.connect(self._rename_album)
 
-        bar.addWidget(self.btn_back)
-        bar.addWidget(self.lbl_album_title, 1)
-        bar.addWidget(self.btn_edit)
-        ld.addLayout(bar)
+        hdr.addWidget(self.btn_back)
+        hdr.addWidget(self.lbl_title, 1)
+        hdr.addWidget(self.btn_rename)
+        root.addLayout(hdr)
 
-        # Colección filtrada por álbum
-        self.album_view: Optional[CollectionView] = None
-        self.detail_container = QWidget()
-        lc = QVBoxLayout(self.detail_container)
-        lc.setContentsMargins(0, 0, 0, 0)
-        ld.addWidget(self.detail_container, 1)
-
-        self.inner.addWidget(page_detail)     # index 1
+        # aquí insertaremos la vista (CollectionView / AlbumDetailView)
+        self.detail_container = QStackedWidget()
+        root.addWidget(self.detail_container, 1)
 
         self._current_album_id: Optional[int] = None
-        self.refresh()
 
-    # -------------------- API pública -------------------- #
-    def refresh(self):
-        if not self.db or not self.db.is_open:
-            self.model.clear()
+    def _show_detail(self, view_widget: QWidget, *, title: str, allow_rename: bool, album_id: Optional[int] = None):
+        self._current_album_id = album_id
+        self.lbl_title.setText(title)
+        self.btn_rename.setVisible(allow_rename)
+
+        # montar el widget en el container
+        while self.detail_container.count():
+            w = self.detail_container.widget(0)
+            self.detail_container.removeWidget(w)
+            w.deleteLater()
+        self.detail_container.addWidget(view_widget)
+        self.detail_container.setCurrentWidget(view_widget)
+        self.stack.setCurrentIndex(1)
+
+    def _rename_album(self):
+        if self._current_album_id is None or not self.db:
             return
-        albums = self.db.list_albums()  # [{id,title,cover_path,count}]
-        self.model.clear()
-
-        style = self.style()
-        folder_icon = style.standardIcon(QStyle.SP_DirIcon)
-
-        for a in albums:
-            title = a["title"]
-            cover = a.get("cover_path") or ""
-            count = int(a.get("count", 0))
-            text = f"{title}\n{count} elemento{'s' if count != 1 else ''}"
-
-            item = QStandardItem(text)
-            item.setEditable(False)
-            item.setData(a["id"], ALBUM_ID_ROLE)
-
-            if cover:
-                pm = QPixmap(cover)
-                if not pm.isNull():
-                    item.setIcon(QIcon(pm))
-                else:
-                    item.setIcon(folder_icon)
-            else:
-                item.setIcon(folder_icon)
-
-            self.model.appendRow(item)
-
-        # grid layout size (coincidir con delegate)
-        tile = 160
-        fm = self.list.fontMetrics()
-        cell_h = 8 + tile + 6 + fm.height()*2 + 8
-        cell_w = 10 + tile + 10
-        self.list.setGridSize(QSize(cell_w, cell_h))
-
-        self.inner.setCurrentIndex(0)
-
-    # -------------------- Handlers -------------------- #
-    def _open_selected(self, idx: QModelIndex):
-        if not idx.isValid():
+        old = self.lbl_title.text()
+        # etiqueta vacía para evitar el QLabel "Título:" quemado (tema)
+        new, ok = QInputDialog.getText(self, "Renombrar álbum", "", text=old)
+        if not ok:
             return
-        album_id = idx.data(ALBUM_ID_ROLE)
-        # título es la primera línea del DisplayRole
-        text = idx.data(Qt.DisplayRole) or ""
-        title = str(text).splitlines()[0] if text else "Álbum"
-        self._open_album(album_id, title)
-
-    def _open_album(self, album_id: int, title: str):
-        if not self.db or not self.db.is_open:
-            return
-        # limpiar contenedor detalle
-        if self.album_view is not None:
-            self.album_view.setParent(None)
-            self.album_view.deleteLater()
-            self.album_view = None
-
-        self._current_album_id = int(album_id)
-        self.lbl_album_title.setText(title)
-
-        self.album_view = CollectionView(
-            db=self.db,
-            title=title,
-            subtitle="Fotos y videos del álbum.",
-            favorites_only=False,
-            album_id=self._current_album_id
-        )
-        self.detail_container.layout().addWidget(self.album_view)
-        self.inner.setCurrentIndex(1)
-
-    def _go_back(self):
-        self.inner.setCurrentIndex(0)
-        self._current_album_id = None
-        # refrescar grilla por si cambió algo
-        self.refresh()
-
-    def _edit_title(self):
-        if not self.db or not self.db.is_open or self._current_album_id is None:
-            return
-        current = self.lbl_album_title.text()
-        new, ok = QInputDialog.getText(
-            self, "Renombrar álbum", "Título:", text=current)
-        if not ok or not new or new == current:
+        title = new.strip()
+        if not title or title == old:
             return
         try:
-            self.db.rename_album(self._current_album_id, new)
-            self.lbl_album_title.setText(new)
+            # renombramos asegurando unicidad (simplemente intenta y si colisiona, avisa)
+            cur = self.db.conn.cursor()
+            cur.execute("UPDATE albums SET title=? WHERE id=?;",
+                        (title, self._current_album_id))
+            self.db.conn.commit()
+            self.lbl_title.setText(title)
+            self._reload_list()
         except Exception as e:
-            QMessageBox.critical(self, "Álbum", f"No se pudo renombrar: {e}")
+            QMessageBox.warning(self, "Álbumes", f"No se pudo renombrar: {e}")
