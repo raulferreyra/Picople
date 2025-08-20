@@ -13,6 +13,7 @@ from .ImageView import ImageView
 from .VideoView import VideoView
 from .MediaViewerPanel import MediaViewerPanel
 from .ViewerOverlay import ViewerOverlay
+from .AlbumDetailView import AlbumDetailView
 
 __all__ = [
     "SectionView",
@@ -29,4 +30,5 @@ __all__ = [
     "VideoView",
     "MediaViewerPanel",
     "ViewerOverlay",
+    "AlbumDetailView",
 ]
