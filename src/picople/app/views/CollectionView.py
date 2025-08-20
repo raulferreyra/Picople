@@ -1,15 +1,16 @@
+# src/picople/app/views/CollectionView.py
 from __future__ import annotations
 from typing import Optional
 from pathlib import Path
 
-from PySide6.QtCore import QSize, QModelIndex, Signal
+from PySide6.QtCore import QSize, QModelIndex
 from PySide6.QtWidgets import (
-    QHBoxLayout, QListView, QComboBox, QLineEdit, QToolButton, QLabel, QMessageBox
+    QHBoxLayout, QListView, QComboBox, QLineEdit, QToolButton, QLabel, QApplication
 )
 
 from picople.infrastructure.db import Database
 from picople.app.controllers import MediaListModel, MediaItem
-from .MediaViewer import MediaViewer
+from .MediaViewerPanel import MediaViewerPanel
 from .SectionView import SectionView
 from .ThumbDelegate import ThumbDelegate
 
@@ -17,15 +18,27 @@ from .ThumbDelegate import ThumbDelegate
 class CollectionView(SectionView):
     """
     Grilla con scroll infinito leyendo desde la DB cifrada.
-    Filtros: Todo/Fotos/Videos + búsqueda por texto (ruta/nombre).
+    Permite:
+      - Filtro por tipo (Todo/Fotos/Videos)
+      - Búsqueda por texto
+      - Restricción a favoritos o a un álbum específico
     """
-    openViewer = Signal(list, int)
 
-    def __init__(self, db: Optional[Database] = None):
-        super().__init__("Colección", "Todas tus fotos y videos en una grilla rápida.", compact=True)
+    def __init__(
+        self,
+        db: Optional[Database] = None,
+        *,
+        title: str = "Colección",
+        subtitle: str = "Todas tus fotos y videos en una grilla rápida.",
+        favorites_only: bool = False,
+        album_id: Optional[int] = None
+    ):
+        super().__init__(title, subtitle, compact=True)
         self.db = db
+        self.favorites_only = favorites_only
+        self.album_id = album_id
 
-        # Controles de filtro (con estilos por tema mediante objectName)
+        # Controles de filtro
         row = QHBoxLayout()
         row.setSpacing(8)
 
@@ -52,7 +65,7 @@ class CollectionView(SectionView):
         row.addWidget(self.btn_reload)
         row.addWidget(self.lbl_info)
 
-        # Lista en modo iconos (mismo look que 'Carpetas' por QSS)
+        # Lista modo iconos
         self.view = QListView()
         self.view.setViewMode(QListView.IconMode)
         self.view.setWrapping(True)
@@ -67,30 +80,20 @@ class CollectionView(SectionView):
         self.view.setModel(self.model)
 
         tile = int(self.model.tile_size)
-
-        # usa el tile también en iconSize:
-        self.view.setIconSize(QSize(tile, tile))
-
-        # si NO quieres mostrar nombres, text_lines=0
         self.delegate = ThumbDelegate(
             tile=tile, text_lines=0, parent=self.view)
         self.view.setItemDelegate(self.delegate)
 
-        # grid estable (altura depende de text_lines)
         fm = self.view.fontMetrics()
-        text_h = (
-            fm.height() * self.delegate.text_lines) if self.delegate.text_lines > 0 else 0
-        pad_top = (
-            self.delegate.text_pad_top if self.delegate.text_lines > 0 else 0)
-        cell_h = self.delegate.vpad + tile + pad_top + text_h + self.delegate.vpad
-        cell_w = self.delegate.hpad + tile + self.delegate.hpad
-        self.view.setGridSize(QSize(cell_w, cell_h))
+        cell_h = 8 + tile + 6 + (fm.height()*0) + 8
+        cell_w = 10 + tile + 10
+        self.view.setGridSize(QSize(cell_w, int(cell_h)))
 
         lay = self.content_layout
         lay.addLayout(row)
         lay.addWidget(self.view, 1)
 
-        # Estado: scroll infinito
+        # Estado scroll
         self.batch = 200
         self.offset = 0
         self.loading = False
@@ -103,7 +106,6 @@ class CollectionView(SectionView):
         self.btn_reload.clicked.connect(self._on_filters_changed)
         self.view.verticalScrollBar().valueChanged.connect(self._maybe_fetch_more)
 
-        # Carga inicial
         self.refresh(reset=True)
 
     # -------- Lógica -------- #
@@ -119,33 +121,33 @@ class CollectionView(SectionView):
             self.model.set_items([])
             self.lbl_info.setText("DB no abierta")
             return
-
         if reset:
             self.offset = 0
             self.has_more = True
             self.loading = False
             self.total = self.db.count_media(
-                kind=self._current_kind(), search=self._search_text())
+                kind=self._current_kind(),
+                search=self._search_text(),
+                favorites_only=self.favorites_only,
+                album_id=self.album_id
+            )
             self.model.set_items([])
-
-        # primera carga
         self._fetch_more(initial=True)
 
     def _fetch_more(self, initial: bool = False):
         if self.loading or not self.has_more:
             return
         self.loading = True
-
-        kind = self._current_kind()
         items = self.db.fetch_media_page(
             offset=self.offset,
             limit=self.batch,
-            kind=kind,
+            kind=self._current_kind(),
             search=self._search_text(),
             order_by="mtime DESC",
+            favorites_only=self.favorites_only,
+            album_id=self.album_id
         )
         self.offset += len(items)
-        # si trajo lote completo, probablemente hay más
         self.has_more = len(items) == self.batch
 
         if initial:
@@ -153,18 +155,14 @@ class CollectionView(SectionView):
         else:
             self.model.append_items(items)
 
-        # info
         shown = len(self.model.items)
-        if self.total:
-            self.lbl_info.setText(f"Mostrando {shown}/{self.total}")
-        else:
-            self.lbl_info.setText(f"Mostrando {shown}")
-
+        self.lbl_info.setText(
+            f"Mostrando {shown}/{self.total}" if self.total else f"Mostrando {shown}"
+        )
         self.loading = False
 
     def _maybe_fetch_more(self, value: int):
         sb = self.view.verticalScrollBar()
-        # cuando estamos cerca del fondo (a 80px)
         if sb.maximum() - value <= 80:
             self._fetch_more(initial=False)
 
@@ -175,25 +173,33 @@ class CollectionView(SectionView):
     def _open_selected(self, index: QModelIndex):
         if not index.isValid():
             return
-        items = []
-        for it in self.model.items:
-            items.append({
-                "path": it["path"],
-                "kind": it["kind"],
-                "mtime": it["mtime"],
-                "size": it["size"],
-                "thumb_path": it.get("thumb_path"),
-            })
-        self.openViewer.emit(items, index.row())
+        items = [
+            MediaItem(
+                path=it["path"],
+                kind=it["kind"],
+                mtime=it["mtime"],
+                size=it["size"],
+                thumb_path=it.get("thumb_path"),
+                favorite=bool(it.get("favorite", False)),
+            )
+            for it in self.model.items
+        ]
+        start_idx = index.row()
+        # visor embebido
+        win = QApplication.activeWindow()
+        viewer = MediaViewerPanel(
+            items, start_idx, db=getattr(win, "_db", None), parent=win)
+        # reemplaza central por visor
+        win._open_viewer_embedded_from(viewer)
 
     def apply_runtime_settings(self, cfg: dict):
         tile = int(cfg.get("collection/tile_size", 160))
         batch = int(cfg.get("collection/batch", self.batch))
         self.delegate.tile = tile
         fm = self.view.fontMetrics()
-        cell_h = 8 + tile + 6 + fm.height()*2 + 8
+        cell_h = 8 + tile + 6 + (fm.height()*0) + 8
         cell_w = 10 + tile + 10
-        self.view.setGridSize(QSize(cell_w, cell_h))
+        self.view.setGridSize(QSize(cell_w, int(cell_h)))
         self.view.viewport().update()
         self.view.setIconSize(QSize(tile, tile))
         self.model.set_tile_size(tile)

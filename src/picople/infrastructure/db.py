@@ -47,7 +47,8 @@ class Database:
         cur = self.conn.cursor()
 
         # Clave y PRAGMAs seguros (algunas pueden no existir según build)
-        cur.execute("PRAGMA key = ?;", (passphrase,))
+        esc = passphrase.replace("'", "''")
+        cur.execute(f"PRAGMA key = '{esc}';")
         try:
             cur.execute("PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA512;")
             cur.execute("PRAGMA kdf_iter = 256000;")
@@ -349,4 +350,10 @@ class Database:
                 cur.execute(
                     "UPDATE albums SET cover_path=? WHERE id=?;", (mthumb, album_id))
 
+        self.conn.commit()
+
+    def rename_album(self, album_id: int, new_title: str) -> None:
+        cur = self.conn.cursor()
+        cur.execute("UPDATE albums SET title=? WHERE id=?;",
+                    (new_title, album_id))
         self.conn.commit()

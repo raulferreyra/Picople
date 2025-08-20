@@ -117,8 +117,8 @@ class MainWindow(QMainWindow):
 
         self._pages = {
             "collection": views.CollectionView(db=self._db),
-            "favorites":  views.FavoritesView(),
-            "albums":     views.AlbumsView(),
+            "favorites":  views.FavoritesView(db=self._db),
+            "albums":     views.AlbumsView(db=self._db),
             "people":     views.PeopleView(),
             "things":     views.ThingsView(),
             "folders":    views.FoldersView(),
@@ -337,22 +337,6 @@ class MainWindow(QMainWindow):
         # No frenamos la cola, solo informamos en la barra (se podría loguear)
         self.status_label.setText(f"Error con {Path(path).name}: {err[:60]}")
 
-    def _on_index_finished(self, summary: dict):
-        self.progress_main.setValue(100)
-        self.progress_bg.hide()
-        self.btn_update.setEnabled(True)
-        total = summary.get("total", 0)
-        imgs = summary.get("images", 0)
-        vids = summary.get("videos", 0)
-        ok = summary.get("thumbs_ok", 0)
-        fail = summary.get("thumbs_fail", 0)
-        coll = self._pages.get("collection")
-        if hasattr(coll, "refresh"):
-            coll.refresh(reset=True)
-        self.status_label.setText(
-            f"Indexación lista: {total} archivos  •  {imgs} fotos / {vids} videos  •  miniaturas OK {ok}, fallos {fail}")
-        QTimer.singleShot(2000, lambda: self.status_label.setText("Listo"))
-
     def _open_database_or_prompt(self):
         # Ruta DB cifrada
         db_dir = app_data_dir() / "db"
@@ -489,3 +473,66 @@ class MainWindow(QMainWindow):
         self.settings.setValue("ui/geometry", self.saveGeometry())
         self.settings.setValue("ui/windowState", self.saveState())
         super().closeEvent(event)
+
+    def get_roots_for_albums(self) -> list[str]:
+        from picople.core.config import get_root_dirs
+        return get_root_dirs()
+
+    def _on_index_finished(self, summary: dict):
+        self.progress_main.setValue(100)
+        self.progress_bg.hide()
+        self.btn_update.setEnabled(True)
+        # reconstruir álbumes por carpetas
+        try:
+            roots = self.get_roots_for_albums()
+            if self._db and self._db.is_open:
+                self._db.rebuild_albums_from_media(roots)
+        except Exception:
+            pass
+
+        # refrescar vistas
+        for key in ("collection", "favorites", "albums"):
+            page = self._pages.get(key)
+            if hasattr(page, "refresh"):
+                if key == "collection":
+                    page.refresh(reset=True)
+                else:
+                    page.refresh()
+
+        # status
+        total = summary.get("total", 0)
+        imgs = summary.get("images", 0)
+        vids = summary.get("videos", 0)
+        ok = summary.get("thumbs_ok", 0)
+        fail = summary.get("thumbs_fail", 0)
+        self.status_label.setText(
+            f"Indexación lista: {total} archivos  •  {imgs} fotos / {vids} videos  •  miniaturas OK {ok}, fallos {fail}"
+        )
+        QTimer.singleShot(2000, lambda: self.status_label.setText("Listo"))
+
+    def _open_embedded_page(self, page_widget: QWidget):
+        # añade y navega a una página arbitraria (detalle de álbum)
+        self.stack.addWidget(page_widget)
+        self.stack.setCurrentWidget(page_widget)
+
+    def _open_viewer_embedded_from(self, viewer_widget: QWidget):
+        # abre el visor embebido reemplazando la colección visualmente
+        self.stack.addWidget(viewer_widget)
+        self.stack.setCurrentWidget(viewer_widget)
+        # cerrar visor vuelve a Colección
+        if hasattr(viewer_widget, "requestClose"):
+            viewer_widget.requestClose.connect(self._close_viewer_embedded)
+
+    def _close_viewer_embedded(self):
+        # al cerrar, volvemos a la Colección
+        coll = self._pages.get("collection")
+        if coll:
+            self.stack.setCurrentWidget(coll)
+        # destruir el visor actual
+        cur = self.stack.currentWidget()
+        # (si el actual es colección ya estamos bien; si era visor, remuévelo)
+        for i in range(self.stack.count()-1, -1, -1):
+            w = self.stack.widget(i)
+            if w is not coll and hasattr(w, "requestClose"):
+                self.stack.removeWidget(w)
+                w.deleteLater()

@@ -1,7 +1,15 @@
+# src/picople/app/views/FavoritesView.py
 from __future__ import annotations
-from .SectionView import SectionView
+from typing import Optional
+from picople.infrastructure.db import Database
+from .CollectionView import CollectionView
 
 
-class FavoritesView(SectionView):
-    def __init__(self):
-        super().__init__("Favoritos", "Tus elementos marcados como favoritos.")
+class FavoritesView(CollectionView):
+    def __init__(self, db: Optional[Database] = None):
+        super().__init__(
+            db,
+            title="Favoritos",
+            subtitle="Tus fotos y videos marcados con ♥.",
+            favorites_only=True
+        )
