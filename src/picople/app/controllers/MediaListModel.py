@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt, QAbstractListModel, QModelIndex
 from PySide6.QtGui import QIcon
 
 ROLE_KIND = Qt.UserRole + 1  # usado por el delegate
+ROLE_FAVORITE = Qt.UserRole + 2
 
 
 class MediaListModel(QAbstractListModel):
@@ -60,6 +61,8 @@ class MediaListModel(QAbstractListModel):
 
         if role == ROLE_KIND:
             return it.get("kind")
+        elif role == ROLE_FAVORITE:
+            return bool(it.get("favorite", False))
 
         if role == Qt.DisplayRole:
             # El delegate puede ocultarlo (text_lines=0)
