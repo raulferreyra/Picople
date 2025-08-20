@@ -5,6 +5,7 @@ import subprocess
 import shutil
 from pathlib import Path
 from typing import Optional
+from picople.core.log import log
 
 from PIL import Image, ImageOps
 
@@ -53,6 +54,7 @@ def image_thumb(src: Path, out_dir: Path, size: int = 320) -> Path:
 
 def video_thumb(src: Path, out_dir: Path, size: int = 320) -> Optional[Path]:
     if not shutil.which("ffmpeg"):
+        log("thumbs.video: ffmpeg no encontrado")
         return None
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -61,32 +63,31 @@ def video_thumb(src: Path, out_dir: Path, size: int = 320) -> Optional[Path]:
         base_vf = f"scale='iw*min({size}/iw\\,{size}/ih)':'ih*min({size}/iw\\,{size}/ih)',pad={size}:{size}:(ow-iw)/2:(oh-ih)/2:color=0x101418"
 
         attempts = [
-            # A) Sin -ss, usa 'thumbnail' para elegir un frame representativo
-            ["-hide_banner", "-loglevel", "error",
-             "-i", str(src),
-             "-vf", f"thumbnail,{base_vf}",
-             "-frames:v", "1", "-y", str(out)],
-            # B) Precisión: -ss después del -i (decodifica hasta 1.5s)
-            ["-hide_banner", "-loglevel", "error",
-             "-i", str(src), "-ss", "1.5",
-             "-vf", base_vf,
-             "-frames:v", "1", "-y", str(out)],
-            # C) Rápido: -ss antes del -i (2.0s)
-            ["-hide_banner", "-loglevel", "error",
-             "-ss", "2.0", "-i", str(src),
-             "-vf", base_vf,
-             "-frames:v", "1", "-y", str(out)],
+            ("thumbnail",
+             ["-hide_banner", "-loglevel", "error", "-i", str(src),
+              "-vf", f"thumbnail,{base_vf}",
+              "-frames:v", "1", "-y", str(out)]),
+            ("ss_after",
+             ["-hide_banner", "-loglevel", "error", "-i", str(src), "-ss", "3.0",
+              "-vf", base_vf, "-frames:v", "1", "-y", str(out)]),
+            ("ss_before",
+             ["-hide_banner", "-loglevel", "error", "-ss", "2.0", "-i", str(src),
+              "-vf", base_vf, "-frames:v", "1", "-y", str(out)]),
         ]
 
-        for cmd in attempts:
+        for name, cmd in attempts:
+            log(f"thumbs.video: try {name} → {src}")
             try:
                 subprocess.run(
                     cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 if out.exists() and out.stat().st_size > 0:
+                    log(f"thumbs.video: success {name} → {out}")
                     return out
-            except Exception:
-                continue
+            except Exception as e:
+                log(f"thumbs.video: fail {name} → {e}")
 
+        log("thumbs.video: all attempts failed", src)
         return None
-    except Exception:
+    except Exception as e:
+        log("thumbs.video: EXC", e)
         return None
