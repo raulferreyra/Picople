@@ -6,7 +6,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QStackedWidget, QToolBar, QToolButton, QLabel, QStatusBar
 )
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QKeySequence, QShortcut, QFont
 
 from .ImageView import ImageView
 from .VideoView import VideoView
@@ -56,8 +56,12 @@ class MediaViewerPanel(QWidget):
         self.btn_playpause.setText("⏯")
 
         self.btn_fav = QToolButton()
+        self.btn_fav.setFont(
+            QFont("Segoe UI Symbol", self.btn_fav.font().pointSize()))
         self.btn_fav.setText("♡")
         self.btn_fav.setCheckable(True)
+        self.btn_fav.toggled.connect(
+            lambda on: self.btn_fav.setText("♥" if on else "♡"))
 
         self.btn_close = QToolButton()
         self.btn_close.setText("✕")
