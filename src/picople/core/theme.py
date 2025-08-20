@@ -221,4 +221,5 @@ QLabel { color: #e5e7eb; }
 QToolBar#MainToolbar { border-bottom: 1px solid #172036; }
 QSlider#MediaSlider::groove:horizontal { height:6px; background:#2a2c31; border-radius:3px; }
 QSlider#MediaSlider::handle:horizontal { width:12px; margin:-4px 0; border-radius:6px; background:#6aa0ff; }
+QLabel#AlbumHeaderTitle { color: palette(text); font-weight: 600; font-size: 16px; }
 """
