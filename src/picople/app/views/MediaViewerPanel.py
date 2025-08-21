@@ -1,3 +1,4 @@
+# src/picople/app/views/MediaViewerPanel.py
 from __future__ import annotations
 from typing import List, Optional
 from pathlib import Path
@@ -37,43 +38,43 @@ class MediaViewerPanel(QWidget):
         root.setSpacing(0)
 
         # ───────────────── Toolbar ─────────────────
-        # Usa el mismo objectName que tu QSS ya estiló (#MainToolbar y #ToolbarBtn).
+        # Usa los mismos objectName que tu QSS ya estiló
         self.tb = QToolBar()
         self.tb.setObjectName("MainToolbar")
         self.tb.setMovable(False)
 
         # Botones generales
         self.btn_prev = QToolButton()
-        self._style_btn(self.btn_prev, "◀")
+        self._style_btn(self.btn_prev,  "◀")
         self.btn_next = QToolButton()
-        self._style_btn(self.btn_next, "▶")
+        self._style_btn(self.btn_next,  "▶")
         self.btn_fav = QToolButton()
-        self._style_btn(self.btn_fav, "♡")
-        self.btn_fav.setCheckable(True)
-        # Fuente que garantiza ♥/♡ si tu tipografía por defecto no las tiene
-        self.btn_fav.setFont(
-            QFont("Segoe UI Symbol", self.btn_fav.font().pointSize()))
+        self._style_btn(self.btn_fav,   "♡")
         self.btn_close = QToolButton()
         self._style_btn(self.btn_close, "✕")
+
+        self.btn_fav.setCheckable(True)
+        # Garantiza que ♥/♡ existan en la fuente
+        self.btn_fav.setFont(
+            QFont("Segoe UI Symbol", self.btn_fav.font().pointSize()))
 
         self.act_prev = self.tb.addWidget(self.btn_prev)
         self.act_next = self.tb.addWidget(self.btn_next)
         self.act_fav = self.tb.addWidget(self.btn_fav)
         self.act_close = self.tb.addWidget(self.btn_close)
 
-        # Controles imagen
-        self.tb.addSeparator()
+        # Controles de IMAGEN (un único separador controlado)
         self.sep_img = self.tb.addSeparator()
         self.btn_fit = QToolButton()
-        self._style_btn(self.btn_fit, "Ajustar")
+        self._style_btn(self.btn_fit,      "Ajustar")
         self.btn_100 = QToolButton()
-        self._style_btn(self.btn_100, "100%")
+        self._style_btn(self.btn_100,      "100%")
         self.btn_zoom_in = QToolButton()
-        self._style_btn(self.btn_zoom_in, "+")
+        self._style_btn(self.btn_zoom_in,  "+")
         self.btn_zoom_out = QToolButton()
         self._style_btn(self.btn_zoom_out, "−")
         self.btn_rotate = QToolButton()
-        self._style_btn(self.btn_rotate, "↻")
+        self._style_btn(self.btn_rotate,   "↻")
 
         self.act_fit = self.tb.addWidget(self.btn_fit)
         self.act_100 = self.tb.addWidget(self.btn_100)
@@ -86,19 +87,22 @@ class MediaViewerPanel(QWidget):
             self.act_zin, self.act_zout, self.act_rotate
         ]
 
-        # Controles video
-        self.tb.addSeparator()
+        # Controles de VIDEO (un único separador controlado)
         self.sep_vid = self.tb.addSeparator()
         self.btn_playpause = QToolButton()
         self._style_btn(self.btn_playpause, "⏯")
+
         self.pos_slider = QSlider(Qt.Horizontal)
         self.pos_slider.setObjectName("MediaSlider")
         self.pos_slider.setRange(0, 0)
         self.pos_slider.setFixedWidth(260)
+
         self.lbl_time = QLabel("00:00 / 00:00")
         self.lbl_time.setObjectName("StatusTag")
+
         self.btn_mute = QToolButton()
         self._style_btn(self.btn_mute, "🔊")
+
         self.vol_slider = QSlider(Qt.Horizontal)
         self.vol_slider.setObjectName("MediaSlider")
         self.vol_slider.setRange(0, 100)
@@ -166,7 +170,7 @@ class MediaViewerPanel(QWidget):
         self.btn_mute.clicked.connect(self._toggle_mute)
         self.vol_slider.valueChanged.connect(self._set_volume)
 
-        # Señales del reproductor de video → UI
+        # Señales del reproductor → UI
         self.video_view.positionChanged.connect(self._on_video_pos)
         self.video_view.durationChanged.connect(self._on_video_dur)
         self.video_view.mutedChanged.connect(
@@ -175,7 +179,7 @@ class MediaViewerPanel(QWidget):
         self.video_view.playingChanged.connect(
             lambda play: self.btn_playpause.setText("⏸" if play else "⏯"))
 
-        # Favoritos (no mutamos MediaItem; actualizamos DB + emitimos)
+        # Favoritos (no mutamos MediaItem; persistimos y notificamos)
         self.btn_fav.toggled.connect(self._toggle_fav)
 
         # Atajos
@@ -241,7 +245,7 @@ class MediaViewerPanel(QWidget):
             self.stack.setCurrentIndex(1)
             self._apply_mode("video")
 
-        # sincroniza el estado UI de favorito leyendo DB si está abierta
+        # sync favorito desde DB si existe; si no, usar el flag de MediaItem
         fav = None
         try:
             if self.db and self.db.is_open:
@@ -253,6 +257,7 @@ class MediaViewerPanel(QWidget):
 
         self.btn_fav.blockSignals(True)
         self.btn_fav.setChecked(bool(fav))
+        self.btn_fav.setText("♥" if fav else "♡")
         self.btn_fav.blockSignals(False)
 
         self.btn_prev.setEnabled(self.nav.has_prev())
@@ -317,16 +322,23 @@ class MediaViewerPanel(QWidget):
         it = self.nav.current()
         if not it:
             return
-        # No mutamos MediaItem (es frozen). Persistimos y notificamos.
+        # Persistimos en DB y reflejamos UI; NO mutamos MediaItem (es frozen).
+        ok = True
         try:
             if self.db and self.db.is_open:
                 self.db.set_favorite(it.path, bool(checked))
         except Exception:
-            # Si falla, revertimos el toggle visualmente
+            ok = False
+
+        if not ok:
+            # Revertir visual si falló la DB
             self.btn_fav.blockSignals(True)
             self.btn_fav.setChecked(not checked)
+            self.btn_fav.setText("♥" if not checked else "♡")
             self.btn_fav.blockSignals(False)
             return
 
-        # Notifica a la grilla para que actualice el overlay del corazón
+        # UI inmediata
+        self.btn_fav.setText("♥" if checked else "♡")
+        # Notificar a la grilla para actualizar overlay sin recargar
         self.favoriteToggled.emit(it.path, bool(checked))
