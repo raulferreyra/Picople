@@ -4,6 +4,7 @@ from PySide6.QtGui import QPainter, QFontMetrics, QIcon, QPixmap, QColor, QPaint
 from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QWidget, QStyle
 
 ROLE_KIND = Qt.UserRole + 1
+ROLE_FAVORITE = Qt.UserRole + 2
 
 
 class ThumbDelegate(QStyledItemDelegate):
@@ -77,6 +78,28 @@ class ThumbDelegate(QStyledItemDelegate):
             path.lineTo(tri[2])
             path.closeSubpath()
             painter.setBrush(QColor(255, 255, 255))
+            painter.drawPath(path)
+            painter.restore()
+
+        # Overlay "favorito" en esquina superior derecha
+        fav = bool(index.data(ROLE_FAVORITE))
+        if fav:
+            painter.save()
+            r = 12
+            cx = icon_rect.right() - r - 6
+            cy = icon_rect.top() + r + 6
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            # círculo oscuro
+            painter.setBrush(QColor(0, 0, 0, 160))
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(QPoint(cx, cy), r, r)
+            # corazón
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(240, 70, 90))
+            path = QPainterPath()
+            path.moveTo(cx, cy+4)
+            path.cubicTo(cx-10, cy-6, cx-6, cy-10, cx, cy-2)
+            path.cubicTo(cx+6, cy-10, cx+10, cy-6, cx, cy+4)
             painter.drawPath(path)
             painter.restore()
 
