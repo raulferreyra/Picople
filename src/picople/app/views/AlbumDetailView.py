@@ -2,8 +2,9 @@ from __future__ import annotations
 from typing import Optional
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QPoint
-from PySide6.QtWidgets import QMenu, QAction
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import QMenu
+from PySide6.QtGui import QAction
 
 from picople.infrastructure.db import Database
 from picople.app.views.CollectionView import CollectionView
