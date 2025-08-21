@@ -184,6 +184,7 @@ class CollectionView(SectionView):
         win = QApplication.activeWindow()
         viewer = MediaViewerPanel(
             items, start_idx, db=getattr(win, "_db", None), parent=win)
+        viewer.favoriteToggled.connect(self.model.set_favorite_by_path)
         # Usa el método que existe:
         if hasattr(win, "_open_viewer_embedded_from"):
             win._open_viewer_embedded_from(viewer)

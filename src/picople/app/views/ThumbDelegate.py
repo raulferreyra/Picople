@@ -1,12 +1,11 @@
 # src/picople/app/views/ThumbDelegate.py
 from __future__ import annotations
 from PySide6.QtCore import Qt, QRect, QSize, QPoint
-from PySide6.QtGui import QPainter, QFontMetrics, QIcon, QPixmap, QColor, QPainterPath
+from PySide6.QtGui import QPainter, QIcon, QPixmap, QColor, QPainterPath
 from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QWidget, QStyle
 
-# Deben coincidir con MediaListModel
-ROLE_KIND = Qt.UserRole + 1
-ROLE_FAVORITE = Qt.UserRole + 2
+# Importa roles desde el model (fuente única)
+from picople.app.controllers.MediaListModel import ROLE_KIND, ROLE_FAVORITE
 
 
 class ThumbDelegate(QStyledItemDelegate):
@@ -44,7 +43,7 @@ class ThumbDelegate(QStyledItemDelegate):
             r.height() - self.tile - (self.text_pad_top if self.text_lines > 0 else 0),
         )
 
-        # Pixmap principal
+        # Pixmap centrado
         deco = index.data(Qt.DecorationRole)
         pm: QPixmap | None = None
         if isinstance(deco, QIcon):
@@ -58,11 +57,10 @@ class ThumbDelegate(QStyledItemDelegate):
             y = icon_rect.top() + (icon_rect.height() - pm2.height()) // 2
             painter.drawPixmap(x, y, pm2)
 
-        # Overlays
+        # Overlays: tipo y favorito
         kind = index.data(ROLE_KIND)
         is_fav = bool(index.data(ROLE_FAVORITE) or False)
 
-        # ▶ overlay (solo videos)
         if kind == "video":
             painter.setRenderHint(QPainter.Antialiasing, True)
             r_play = 14
@@ -72,7 +70,6 @@ class ThumbDelegate(QStyledItemDelegate):
             painter.setBrush(QColor(0, 0, 0, 160))
             painter.setPen(Qt.NoPen)
             painter.drawEllipse(QPoint(cx, cy), r_play, r_play)
-
             tri = QPainterPath()
             tri.moveTo(cx - 4, cy - 6)
             tri.lineTo(cx - 4, cy + 6)
@@ -82,7 +79,6 @@ class ThumbDelegate(QStyledItemDelegate):
             painter.drawPath(tri)
             painter.restore()
 
-        # ♥ overlay (solo si es favorito)
         if is_fav:
             painter.setRenderHint(QPainter.Antialiasing, True)
             r_heart = 10
@@ -92,7 +88,6 @@ class ThumbDelegate(QStyledItemDelegate):
             painter.setPen(Qt.NoPen)
             painter.setBrush(QColor(0, 0, 0, 140))
             painter.drawEllipse(QPoint(cx, cy), r_heart + 4, r_heart + 4)
-
             painter.setBrush(QColor(255, 80, 100))
             heart = QPainterPath()
             heart.moveTo(cx, cy + 3)
@@ -101,15 +96,5 @@ class ThumbDelegate(QStyledItemDelegate):
             painter.drawPath(heart)
             painter.restore()
 
-        # Texto (si se desea)
-        if self.text_lines > 0:
-            txt = str(index.data(Qt.DisplayRole) or "")
-            color = option.palette.highlightedText().color() if (option.state & QStyle.State_Selected) \
-                else option.palette.text().color()
-            painter.setPen(color)
-            fm: QFontMetrics = option.fontMetrics
-            line = fm.elidedText(txt, Qt.ElideMiddle, text_rect.width())
-            painter.drawText(text_rect, Qt.AlignHCenter |
-                             Qt.AlignVCenter, line)
-
+        # (Sin texto: text_lines=0)
         painter.restore()
