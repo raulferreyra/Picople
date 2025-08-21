@@ -175,33 +175,21 @@ class CollectionView(SectionView):
             return
         items = [
             MediaItem(
-                path=it["path"],
-                kind=it["kind"],
-                mtime=it["mtime"],
-                size=it["size"],
-                thumb_path=it.get("thumb_path"),
-                favorite=bool(it.get("favorite", False)),
+                path=it["path"], kind=it["kind"], mtime=it["mtime"], size=it["size"],
+                thumb_path=it.get("thumb_path"), favorite=bool(it.get("favorite", False)),
             )
             for it in self.model.items
         ]
         start_idx = index.row()
-        # visor embebido
         win = QApplication.activeWindow()
         viewer = MediaViewerPanel(
             items, start_idx, db=getattr(win, "_db", None), parent=win)
-        # reemplaza central por visor
-        win._open_viewer_embedded_from(viewer)
-
-        def _on_view_closed():
-            # repinta todo; si estás en "solo favoritos" además filtra
-            if self.favorites_only:
-                self.refresh(reset=True)
-            else:
-                top_left = self.model.index(0, 0)
-                bottom_right = self.model.index(len(self.model.items)-1, 0)
-                self.model.dataChanged.emit(top_left, bottom_right)
-
-        viewer.requestClose.connect(_on_view_closed)
+        # Usa el método que existe:
+        if hasattr(win, "_open_viewer_embedded_from"):
+            win._open_viewer_embedded_from(viewer)
+        else:
+            # compat (si tu MainWindow tuviera la variante antigua que recibe items)
+            win._open_viewer_embedded(items, start_idx)
 
     def apply_runtime_settings(self, cfg: dict):
         tile = int(cfg.get("collection/tile_size", 160))

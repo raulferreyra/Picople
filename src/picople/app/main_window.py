@@ -1,6 +1,7 @@
-# src/picople/app/main_window.py
 from __future__ import annotations
-from typing import List, Tuple
+from typing import Tuple
+
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QSize, QSettings, QThread
 from PySide6.QtGui import QIcon
@@ -15,16 +16,13 @@ from picople.app import views
 from picople.core.config import get_root_dirs
 from picople.infrastructure.indexer import IndexerWorker
 from picople.infrastructure.db import Database, DBError
-from pathlib import Path
 from picople.core.paths import app_data_dir
 from picople.app.controllers import MediaItem
 from picople.app.views.ViewerOverlay import ViewerOverlay
 from picople.app.views.MediaViewerPanel import MediaViewerPanel
 
 
-# ------------------------ Constantes ------------------------ #
-
-SECTIONS = [
+SECTIONS: Tuple[Tuple[str, str], ...] = (
     ("collection", "Colección"),
     ("favorites", "Favoritos"),
     ("albums", "Álbumes"),
@@ -32,7 +30,7 @@ SECTIONS = [
     ("things", "Cosas"),
     ("folders", "Carpetas"),
     ("settings", "Preferencias"),
-]
+)
 
 
 class MainWindow(QMainWindow):
@@ -42,21 +40,20 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
         self.setWindowIcon(self.style().standardIcon(QStyle.SP_ComputerIcon))
 
-        # Estado persistente
         self.settings = QSettings()
         self.dark_mode = (self.settings.value("ui/theme", "dark") == "dark")
 
-        self._db = None
-        self._db_key = None
-        self._open_database_or_prompt()
+        self._db: Database | None = None
+        self._db_key: str | None = None
+        self._index_thread: QThread | None = None
+        self._indexer: IndexerWorker | None = None
+        self._viewer_page: QWidget | None = None
 
+        self._open_database_or_prompt()
         self._build_ui()
         self._apply_theme()
 
-        self._index_thread = None
-        self._indexer = None
-
-        # Restaurar geometría/estado
+        # restaurar
         geom = self.settings.value("ui/geometry")
         if geom is not None:
             self.restoreGeometry(geom)
@@ -64,15 +61,13 @@ class MainWindow(QMainWindow):
         if state is not None:
             self.restoreState(state)
 
-        # Navegar a última sección o Colección
         last = self.settings.value("ui/last_section", "collection")
         self._navigate(last if last in self._pages else "collection")
 
-        # Primer arranque: si no hay carpetas
         if not get_root_dirs():
             QTimer.singleShot(400, self._first_run_prompt)
 
-    # --------------------------- UI --------------------------- #
+    # ---------- UI ----------
     def _build_ui(self) -> None:
         root = QWidget()
         self.setCentralWidget(root)
@@ -80,38 +75,37 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Sidebar
+        # sidebar
         self.sidebar = QFrame()
         self.sidebar.setObjectName("Sidebar")
         self.sidebar.setFixedWidth(270)
-        side_layout = QVBoxLayout(self.sidebar)
-        side_layout.setContentsMargins(12, 12, 12, 12)
-        side_layout.setSpacing(10)
+        side = QVBoxLayout(self.sidebar)
+        side.setContentsMargins(12, 12, 12, 12)
+        side.setSpacing(10)
 
         title = QLabel("Picople")
         title.setObjectName("AppTitle")
         title.setStyleSheet(
             "font-size: 18px; font-weight: 700; padding: 8px 10px;")
-        side_layout.addWidget(title)
+        side.addWidget(title)
 
         self.nav_buttons: dict[str, QPushButton] = {}
         for key, text in SECTIONS:
-            btn = QPushButton(text)
-            btn.setObjectName("NavButton")
-            btn.setCheckable(True)
-            btn.setAutoExclusive(True)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setIcon(self._icon_for_key(key))
-            btn.setIconSize(QSize(18, 18))
-            btn.clicked.connect(lambda _c, k=key: self._navigate(k))
-            self.nav_buttons[key] = btn
-            side_layout.addWidget(btn)
+            b = QPushButton(text)
+            b.setObjectName("NavButton")
+            b.setCheckable(True)
+            b.setAutoExclusive(True)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setIcon(self._icon_for_key(key))
+            b.setIconSize(QSize(18, 18))
+            b.clicked.connect(lambda _c, k=key: self._navigate(k))
+            self.nav_buttons[key] = b
+            side.addWidget(b)
 
-        side_layout.addStretch(1)
+        side.addStretch(1)
 
-        # Centro: páginas
+        # centro
         self.stack = QStackedWidget()
-
         self.viewer_overlay = ViewerOverlay(parent=self.centralWidget())
         self.viewer_overlay.hide()
 
@@ -126,19 +120,14 @@ class MainWindow(QMainWindow):
             "settings":   views.SettingsView(self.settings),
         }
 
-        self._viewer_page = None
         coll = self._pages.get("collection")
         if hasattr(coll, "openViewer"):
             coll.openViewer.connect(self._open_viewer_embedded)
 
-        settings_view = self._pages.get("settings")
-        if hasattr(settings_view, "settingsApplied"):
-            settings_view.settingsApplied.connect(self._on_settings_applied)
-
         for key in self._pages:
             self.stack.addWidget(self._pages[key])
 
-        # Toolbar
+        # toolbar
         self.toolbar = QToolBar()
         self.toolbar.setObjectName("MainToolbar")
         self.toolbar.setMovable(False)
@@ -182,11 +171,11 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(self.btn_theme)
         self.toolbar.addWidget(self.btn_backup)
 
-        # Ensamblar
+        # ensamblar
         layout.addWidget(self.sidebar)
         layout.addWidget(self.stack, 1)
 
-        # Status bar
+        # status
         self.status = QStatusBar()
         self.setStatusBar(self.status)
         self.status_label = QLabel("Listo")
@@ -196,14 +185,12 @@ class MainWindow(QMainWindow):
         self.progress_main.setFixedWidth(240)
         self.progress_main.setRange(0, 100)
         self.progress_main.setValue(0)
-        self.progress_main.setToolTip("Progreso de tarea principal")
         self.progress_main.setTextVisible(False)
 
         self.progress_bg = QProgressBar()
         self.progress_bg.setFixedWidth(160)
         self.progress_bg.setRange(0, 0)
         self.progress_bg.hide()
-        self.progress_bg.setToolTip("Trabajos en segundo plano")
         self.progress_bg.setTextVisible(False)
 
         tag1 = QLabel("Proceso:")
@@ -217,7 +204,7 @@ class MainWindow(QMainWindow):
         self.status.addPermanentWidget(tag2)
         self.status.addPermanentWidget(self.progress_bg)
 
-    # ------------------------ Navegación ------------------------ #
+    # ---------- navegación ----------
     def _navigate(self, key: str) -> None:
         for k, btn in self.nav_buttons.items():
             btn.setChecked(k == key)
@@ -226,7 +213,7 @@ class MainWindow(QMainWindow):
             self.stack.setCurrentWidget(page)
             self.settings.setValue("ui/last_section", key)
 
-    # ------------------------ Acciones ------------------------ #
+    # ---------- acciones ----------
     def _on_search(self) -> None:
         query = self.search_edit.text().strip()
         self._navigate("search")
@@ -288,7 +275,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText("Tema alternado")
         QTimer.singleShot(1200, lambda: self.status_label.setText("Listo"))
 
-    # ------------------------ Helpers ------------------------ #
+    # ---------- helpers ----------
     def _apply_theme(self) -> None:
         self.setStyleSheet(QSS_DARK if self.dark_mode else QSS_LIGHT)
 
@@ -305,9 +292,6 @@ class MainWindow(QMainWindow):
         }
         return style.standardIcon(mapping.get(key, QStyle.SP_FileIcon))
 
-    def _update_theme_icon(self) -> None:
-        self.btn_theme.setText("🌙" if self.dark_mode else "☀")
-
     def _first_run_prompt(self) -> None:
         ans = QMessageBox.question(
             self, "Bienvenido a Picople",
@@ -316,7 +300,6 @@ class MainWindow(QMainWindow):
         )
         if ans == QMessageBox.Yes:
             self._navigate("folders")
-            # abrir el diálogo de agregar carpeta si la vista lo soporta
             folders_view = self._pages.get("folders")
             if hasattr(folders_view, "open_add_dialog"):
                 folders_view.open_add_dialog()
@@ -334,157 +317,16 @@ class MainWindow(QMainWindow):
             self.status_label.setText(f"Indexando… {i}/{total}  •  {name}")
 
     def _on_index_error(self, path: str, err: str):
-        # No frenamos la cola, solo informamos en la barra (se podría loguear)
         self.status_label.setText(f"Error con {Path(path).name}: {err[:60]}")
-
-    def _open_database_or_prompt(self):
-        # Ruta DB cifrada
-        db_dir = app_data_dir() / "db"
-        db_dir.mkdir(parents=True, exist_ok=True)
-        db_path = db_dir / "picople.db"
-
-        self._db = Database(db_path)
-
-        if not db_path.exists():
-            # DB no existe -> solicitar crear passphrase
-            pw, ok = QInputDialog.getText(
-                self, "Crear seguridad",
-                "Crea una clave para cifrar la base de datos:",
-                echo=QLineEdit.Password
-            )
-            if not ok or not pw:
-                QMessageBox.warning(
-                    self, "Picople", "Se necesita una clave para crear la base cifrada.")
-                self._db = None
-                return
-            try:
-                self._db.open(pw)
-                self._db_key = pw                 # <-- guarda la clave SOLO aquí
-                QMessageBox.information(
-                    self, "Picople", "Base de datos cifrada creada correctamente.")
-            except DBError as e:
-                QMessageBox.critical(self, "Picople", str(e))
-                self._db = None
-                self._db_key = None
-                return
-        else:
-            # DB ya existe: pedir clave para abrir
-            pw, ok = QInputDialog.getText(
-                self, "Desbloquear seguridad",
-                "Ingresa la clave de la base de datos:",
-                echo=QLineEdit.Password
-            )
-            if not ok or not pw:
-                QMessageBox.warning(
-                    self, "Picople", "No se pudo abrir la base de datos cifrada.")
-                self._db = None
-                self._db_key = None
-                return
-            try:
-                self._db.open(pw)
-                self._db_key = pw                 # <-- y también aquí
-            except DBError as e:
-                QMessageBox.critical(self, "Picople", str(e))
-                self._db = None
-                self._db_key = None
-
-    def _on_backup(self):
-        if not self._db or not self._db.is_open:
-            QMessageBox.warning(
-                self, "Picople", "La base de datos no está abierta.")
-            return
-        dest, ok = QFileDialog.getSaveFileName(
-            self, "Guardar backup cifrado", "picople-backup.db", "Bases de datos (*.db)")
-        if not ok or not dest:
-            return
-        # Pedir passphrase para el backup (puede ser la misma u otra)
-        pw, ok2 = QInputDialog.getText(
-            self, "Clave de backup", "Clave para el archivo de backup:", echo=QLineEdit.Password)
-        if not ok2 or not pw:
-            return
-        try:
-            self._db.backup_to(Path(dest), pw)
-            QMessageBox.information(
-                self, "Backup", "Backup cifrado creado correctamente.")
-        except Exception as e:
-            QMessageBox.critical(self, "Backup", f"Error al crear backup: {e}")
-
-    # ------------------------ Persistencia ventana ------------------------ #
-
-    def _on_settings_applied(self, cfg: dict):
-        # Persistencia si vino desde "Guardar" ya la maneja la vista.
-        # Aquí aplicamos en caliente lo que sea relevante para vistas vivas.
-        coll = self._pages.get("collection")
-        if hasattr(coll, "apply_runtime_settings"):
-            coll.apply_runtime_settings(cfg)
-
-        # feedback en status
-        self.status_label.setText("Preferencias aplicadas")
-        QTimer.singleShot(1500, lambda: self.status_label.setText("Listo"))
-
-    def _open_viewer_overlay(self, items: list, start_index: int):
-        # items ya vienen como dicts del modelo; conviértelos a MediaItem
-        media_items = [MediaItem(path=i["path"], kind=i["kind"], mtime=i["mtime"],
-                                 size=i["size"], thumb_path=i.get("thumb_path")) for i in items]
-        self.viewer_overlay.open(media_items, start_index)
-
-    def _open_viewer_embedded(self, items: list, start_index: int):
-        media_items = [MediaItem(path=i["path"], kind=i["kind"], mtime=i["mtime"],
-                                 size=i["size"], thumb_path=i.get("thumb_path")) for i in items]
-        if self._viewer_page is not None:
-            # reemplaza la página vieja
-            idx = self.stack.indexOf(self._viewer_page)
-            if idx >= 0:
-                w = self.stack.widget(idx)
-                self.stack.removeWidget(w)
-                w.deleteLater()
-            self._viewer_page = None
-
-        self._viewer_page = MediaViewerPanel(
-            media_items, start_index, parent=self)
-        self._viewer_page.requestClose.connect(self._close_viewer_embedded)
-        self.stack.addWidget(self._viewer_page)
-        self.stack.setCurrentWidget(self._viewer_page)
-
-    def _close_viewer_embedded(self):
-        if self._viewer_page is not None:
-            self.stack.setCurrentWidget(self._pages["collection"])
-            idx = self.stack.indexOf(self._viewer_page)
-            if idx >= 0:
-                w = self.stack.widget(idx)
-                self.stack.removeWidget(w)
-                w.deleteLater()
-            self._viewer_page = None
-
-    def closeEvent(self, event) -> None:
-        try:
-            if self._index_thread and self._index_thread.isRunning():
-                self.status_label.setText("Cerrando tareas en segundo plano…")
-                if self._indexer:
-                    try:
-                        self._indexer.cancel()   # pide cancelación
-                    except Exception:
-                        pass
-                self._index_thread.quit()
-                self._index_thread.wait(5000)  # hasta 5s
-        except Exception:
-            pass
-
-        self.settings.setValue("ui/geometry", self.saveGeometry())
-        self.settings.setValue("ui/windowState", self.saveState())
-        super().closeEvent(event)
-
-    def get_roots_for_albums(self) -> list[str]:
-        from picople.core.config import get_root_dirs
-        return get_root_dirs()
 
     def _on_index_finished(self, summary: dict):
         self.progress_main.setValue(100)
         self.progress_bg.hide()
         self.btn_update.setEnabled(True)
+
         # reconstruir álbumes por carpetas
         try:
-            roots = self.get_roots_for_albums()
+            roots = get_root_dirs()
             if self._db and self._db.is_open:
                 self._db.rebuild_albums_from_media(roots)
         except Exception:
@@ -499,7 +341,6 @@ class MainWindow(QMainWindow):
                 else:
                     page.refresh()
 
-        # status
         total = summary.get("total", 0)
         imgs = summary.get("images", 0)
         vids = summary.get("videos", 0)
@@ -510,29 +351,152 @@ class MainWindow(QMainWindow):
         )
         QTimer.singleShot(2000, lambda: self.status_label.setText("Listo"))
 
-    def _open_embedded_page(self, page_widget: QWidget):
-        # añade y navega a una página arbitraria (detalle de álbum)
-        self.stack.addWidget(page_widget)
-        self.stack.setCurrentWidget(page_widget)
+    # visor embebido
+    def _open_viewer_embedded(self, items: list, start_index: int):
+        media_items = [
+            MediaItem(
+                path=i["path"], kind=i["kind"], mtime=i["mtime"], size=i["size"],
+                thumb_path=i.get("thumb_path"), favorite=bool(i.get("favorite", False))
+            )
+            for i in items
+        ]
+        if self._viewer_page is not None:
+            idx = self.stack.indexOf(self._viewer_page)
+            if idx >= 0:
+                w = self.stack.widget(idx)
+                self.stack.removeWidget(w)
+                w.deleteLater()
+            self._viewer_page = None
 
-    def _open_viewer_embedded_from(self, viewer_widget: QWidget):
-        # abre el visor embebido reemplazando la colección visualmente
-        self.stack.addWidget(viewer_widget)
-        self.stack.setCurrentWidget(viewer_widget)
-        # cerrar visor vuelve a Colección
-        if hasattr(viewer_widget, "requestClose"):
-            viewer_widget.requestClose.connect(self._close_viewer_embedded)
+        self._viewer_page = MediaViewerPanel(
+            media_items, start_index, parent=self)
+        if hasattr(self._viewer_page, "requestClose"):
+            self._viewer_page.requestClose.connect(self._close_viewer_embedded)
+
+        self.stack.addWidget(self._viewer_page)
+        self.stack.setCurrentWidget(self._viewer_page)
 
     def _close_viewer_embedded(self):
-        # al cerrar, volvemos a la Colección
+        if self._viewer_page is not None:
+            self.stack.setCurrentWidget(self._pages["collection"])
+            idx = self.stack.indexOf(self._viewer_page)
+            if idx >= 0:
+                w = self.stack.widget(idx)
+                self.stack.removeWidget(w)
+                w.deleteLater()
+            self._viewer_page = None
+
+    def _update_theme_icon(self) -> None:
+        # Icono textual claro/oscuro
+        self.btn_theme.setText("🌙" if self.dark_mode else "☀")
+
+    def _open_database_or_prompt(self) -> None:
+        # Ruta de la DB cifrada
+        db_dir = app_data_dir() / "db"
+        db_dir.mkdir(parents=True, exist_ok=True)
+        db_path = db_dir / "picople.db"
+
+        self._db = Database(db_path)
+
+        if not db_path.exists():
+            # Crear nueva base cifrada
+            pw, ok = QInputDialog.getText(
+                self, "Crear seguridad",
+                "Crea una clave para cifrar la base de datos:",
+                echo=QLineEdit.Password
+            )
+            if not ok or not pw:
+                QMessageBox.warning(
+                    self, "Picople", "Se necesita una clave para crear la base cifrada."
+                )
+                self._db = None
+                self._db_key = None
+                return
+            try:
+                self._db.open(pw)
+                self._db_key = pw
+                QMessageBox.information(
+                    self, "Picople", "Base de datos cifrada creada correctamente.")
+            except DBError as e:
+                QMessageBox.critical(self, "Picople", str(e))
+                self._db = None
+                self._db_key = None
+                return
+        else:
+            # Abrir base existente
+            pw, ok = QInputDialog.getText(
+                self, "Desbloquear seguridad",
+                "Ingresa la clave de la base de datos:",
+                echo=QLineEdit.Password
+            )
+            if not ok or not pw:
+                QMessageBox.warning(
+                    self, "Picople", "No se pudo abrir la base de datos cifrada.")
+                self._db = None
+                self._db_key = None
+                return
+            try:
+                self._db.open(pw)
+                self._db_key = pw
+            except DBError as e:
+                QMessageBox.critical(self, "Picople", str(e))
+                self._db = None
+                self._db_key = None
+
+    def _on_backup(self):
+        # Placeholder por ahora; así no falla el botón
+        QMessageBox.information(self, "Picople", "Backup aún no implementado.")
+
+    # persistencia
+
+    def _open_viewer_embedded_from(self, viewer_widget: QWidget):
+        """Inserta un viewer ya construido y navega a él."""
+        # Cierra uno anterior si existe
+        if getattr(self, "_viewer_page", None):
+            try:
+                idx = self.stack.indexOf(self._viewer_page)
+                if idx >= 0:
+                    w = self.stack.widget(idx)
+                    self.stack.removeWidget(w)
+                    w.deleteLater()
+            except Exception:
+                pass
+        self._viewer_page = viewer_widget
+        if hasattr(viewer_widget, "requestClose"):
+            viewer_widget.requestClose.connect(self._close_viewer_embedded)
+        self.stack.addWidget(viewer_widget)
+        self.stack.setCurrentWidget(viewer_widget)
+
+    def _close_viewer_embedded(self):
+        """Vuelve a la colección y limpia el viewer embebido."""
         coll = self._pages.get("collection")
         if coll:
             self.stack.setCurrentWidget(coll)
-        # destruir el visor actual
-        cur = self.stack.currentWidget()
-        # (si el actual es colección ya estamos bien; si era visor, remuévelo)
-        for i in range(self.stack.count()-1, -1, -1):
-            w = self.stack.widget(i)
-            if w is not coll and hasattr(w, "requestClose"):
-                self.stack.removeWidget(w)
-                w.deleteLater()
+        if getattr(self, "_viewer_page", None):
+            try:
+                idx = self.stack.indexOf(self._viewer_page)
+                if idx >= 0:
+                    w = self.stack.widget(idx)
+                    self.stack.removeWidget(w)
+                    w.deleteLater()
+            except Exception:
+                pass
+            self._viewer_page = None
+
+    def closeEvent(self, event) -> None:
+        try:
+            if self._index_thread and self._index_thread.isRunning():
+                self.status_label.setText("Cerrando tareas en segundo plano…")
+                if self._indexer:
+                    try:
+                        self._indexer.cancel()
+                    except Exception:
+                        pass
+                self._index_thread.quit()
+                self._index_thread.wait(5000)
+        except Exception:
+            pass
+
+        self.settings.setValue("ui/geometry", self.saveGeometry())
+        self.settings.setValue("ui/windowState", self.saveState())
+        super().closeEvent(event)

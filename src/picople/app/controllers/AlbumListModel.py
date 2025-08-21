@@ -1,39 +1,64 @@
-# src/picople/app/controllers/AlbumListModel.py
 from __future__ import annotations
-from typing import List, Dict
-from PySide6.QtCore import Qt, QAbstractListModel, QModelIndex
+from pathlib import Path
+from typing import Any, List
 
-ROLE_ID = Qt.UserRole + 101
-ROLE_TITLE = Qt.UserRole + 102
-ROLE_COUNT = Qt.UserRole + 103
-ROLE_COVER = Qt.UserRole + 104
+from PySide6.QtCore import Qt, QAbstractListModel, QModelIndex
+from PySide6.QtGui import QIcon, QPixmap
+
+
+ROLE_ID = Qt.UserRole + 1
+ROLE_TITLE = Qt.UserRole + 2
+ROLE_COUNT = Qt.UserRole + 3
+ROLE_COVER = Qt.UserRole + 4
 
 
 class AlbumListModel(QAbstractListModel):
-    def __init__(self):
-        super().__init__()
-        self.items: List[Dict] = []
+    """
+    items: dicts con {id, title, cover_path, count}
+    """
 
-    def set_items(self, items: List[Dict]):
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.items: List[dict] = []
+        self._ph = QPixmap(240, 240)
+        self._ph.fill(Qt.transparent)
+
+    def set_items(self, items: List[dict]) -> None:
         self.beginResetModel()
-        self.items = items
+        self.items = items[:] if items else []
         self.endResetModel()
 
-    def rowCount(self, parent=QModelIndex()) -> int:
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else len(self.items)
 
-    def data(self, idx: QModelIndex, role: int):
-        if not idx.isValid():
+    def flags(self, index: QModelIndex) -> Qt.ItemFlags:
+        if not index.isValid():
+            return Qt.NoItemFlags
+        return Qt.ItemIsEnabled | Qt.ItemIsSelectable
+
+    def data(self, index: QModelIndex, role: int = Qt.DisplayRole) -> Any:
+        if not index.isValid():
             return None
-        it = self.items[idx.row()]
+        it = self.items[index.row()]
+
         if role == Qt.DisplayRole:
-            return f"{it['title']}  ({it['count']})"
+            return it.get("title", "")
+
+        if role == Qt.DecorationRole:
+            cp = it.get("cover_path")
+            if cp and Path(cp).exists():
+                pm = QPixmap(str(cp))
+                if not pm.isNull():
+                    return QIcon(pm)
+            return QIcon(self._ph)
+
         if role == ROLE_ID:
-            return it["id"]
+            return it.get("id")
         if role == ROLE_TITLE:
-            return it["title"]
+            return it.get("title")
         if role == ROLE_COUNT:
-            return it["count"]
+            return it.get("count", 0)
         if role == ROLE_COVER:
             return it.get("cover_path")
+
         return None

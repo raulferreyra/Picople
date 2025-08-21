@@ -4,38 +4,39 @@ from .MediaItem import MediaItem
 
 
 class MediaNavigator:
-    def __init__(self, items: List[MediaItem], index: int = 0):
-        self.items = items or []
-        self.index = max(0, min(index, len(self.items) - 1))
+    def __init__(self, items: List[MediaItem], index: int = 0) -> None:
+        self._items = items or []
+        self._i = max(0, min(index, len(self._items) - 1)
+                      ) if self._items else -1
+
+    # estado
+    def count(self) -> int:
+        return len(self._items)
+
+    @property
+    def index(self) -> int:
+        return self._i
 
     def current(self) -> Optional[MediaItem]:
-        if not self.items:
-            return None
-        return self.items[self.index]
+        if 0 <= self._i < len(self._items):
+            return self._items[self._i]
+        return None
 
+    # navegación
     def has_prev(self) -> bool:
-        return self.index > 0
+        return self._i > 0
 
     def has_next(self) -> bool:
-        return self.index < len(self.items) - 1
+        return self._i + 1 < len(self._items)
 
-    def prev(self) -> Optional[MediaItem]:
+    def prev(self) -> bool:
         if self.has_prev():
-            self.index -= 1
-            return self.current()
-        return None
+            self._i -= 1
+            return True
+        return False
 
-    def next(self) -> Optional[MediaItem]:
+    def next(self) -> bool:
         if self.has_next():
-            self.index += 1
-            return self.current()
-        return None
-
-    def goto(self, idx: int) -> Optional[MediaItem]:
-        if 0 <= idx < len(self.items):
-            self.index = idx
-            return self.current()
-        return None
-
-    def count(self) -> int:
-        return len(self.items)
+            self._i += 1
+            return True
+        return False
