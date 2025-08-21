@@ -137,6 +137,10 @@ class MediaViewerPanel(QWidget):
         self._sc("Ctrl+-", lambda: self._img("zout"))
         self._sc("R", lambda: self._img("rot"))
 
+        # Arranca con todos los grupos ocultos; _load_current() mostrará lo que toca
+        self._show_image_controls(False)
+        self._show_video_controls(False)
+
         self._load_current()
 
     # helpers ui
