@@ -192,6 +192,17 @@ class CollectionView(SectionView):
         # reemplaza central por visor
         win._open_viewer_embedded_from(viewer)
 
+        def _on_view_closed():
+            # repinta todo; si estás en "solo favoritos" además filtra
+            if self.favorites_only:
+                self.refresh(reset=True)
+            else:
+                top_left = self.model.index(0, 0)
+                bottom_right = self.model.index(len(self.model.items)-1, 0)
+                self.model.dataChanged.emit(top_left, bottom_right)
+
+        viewer.requestClose.connect(_on_view_closed)
+
     def apply_runtime_settings(self, cfg: dict):
         tile = int(cfg.get("collection/tile_size", 160))
         batch = int(cfg.get("collection/batch", self.batch))
