@@ -1,3 +1,4 @@
+# app/picople/src/picople/infrastructure/people_store.py
 from __future__ import annotations
 from typing import Optional, Iterable, Tuple, List, Dict, Any
 

@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from PySide6.QtCore import Qt, QSize, QModelIndex
 from PySide6.QtGui import QIcon, QPixmap, QStandardItem, QStandardItemModel
@@ -9,9 +9,9 @@ from PySide6.QtWidgets import (
 )
 
 from picople.infrastructure.db import Database
+from picople.infrastructure.people_store import PeopleStore
 from .SectionView import SectionView
 from .PersonDetailView import PersonDetailView
-
 
 ROLE_DATA = Qt.UserRole + 100
 TILE = 160
@@ -19,22 +19,32 @@ TILE = 160
 
 class PeopleView(SectionView):
     """
-    Página principal de Personas y mascotas:
-      • Página de lista: clusters (mock por ahora) con conteo de sugerencias
-      • Página de detalle: inserta PersonDetailView y botón “volver”
+    Personas y mascotas:
+      • Lista: clusters (DB si disponible, mock si no)
+      • Detalle: PersonDetailView (Todos/Sugerencias) con botón “volver”
     """
 
     def __init__(self, db: Optional[Database] = None):
-        super().__init__("Personas y mascotas", "Agrupación por caras (personas) y mascotas.",
-                         compact=True, show_header=True)
+        super().__init__(
+            "Personas y mascotas",
+            "Agrupación por caras (personas) y mascotas.",
+            compact=True,
+            show_header=True
+        )
         self.db = db
+        self.store: Optional[PeopleStore] = None
+        try:
+            if self.db and self.db.is_open:
+                self.store = PeopleStore(self.db)
+        except Exception:
+            self.store = None
 
         self.stack = QStackedWidget(self)
         self._page_list = QWidget(self)
         self._page_detail = QWidget(self)
 
-        self._clusters: list[Dict[str, Any]] = self._mock_clusters()
-        self._current_cluster_id: Optional[str] = None
+        self._clusters_mock: list[Dict[str, Any]] = self._mock_clusters()
+        self._current_person_id: Optional[str] = None
 
         self._build_list_page()
         self._build_detail_page()
@@ -58,7 +68,7 @@ class PeopleView(SectionView):
         self.list.setMovement(QListView.Static)
         self.list.setIconSize(QSize(TILE, TILE))
         self.list.setUniformItemSizes(False)
-        self.list.doubleClicked.connect(self._open_cluster)
+        self.list.doubleClicked.connect(self._open_person)
 
         self.model = QStandardItemModel(self.list)
         self.list.setModel(self.model)
@@ -66,19 +76,27 @@ class PeopleView(SectionView):
         root.addWidget(self.list, 1)
 
     def _reload_list(self) -> None:
+        """Carga desde DB si hay store; si no, usa mock."""
         self.model.clear()
-        for c in self._clusters:
-            pm = QPixmap(c.get("cover") or "")
+
+        persons: List[Dict[str, Any]]
+        if self.store:
+            persons = self.store.list_persons_with_suggestion_counts()
+        else:
+            persons = self._clusters_mock
+
+        for p in persons:
+            pm = QPixmap(p.get("cover") or "")
             if pm.isNull():
                 pm = QPixmap(TILE, TILE)
                 pm.fill(Qt.gray)
             icon = QIcon(pm)
-            title = c.get("title") or "Sin nombre"
-            sugs = int(c.get("suggestions_count", 0))
+            title = p.get("title") or "Sin nombre"
+            sugs = int(p.get("suggestions_count", 0))
             text = f"{title}  ({sugs})"
             it = QStandardItem(icon, text)
             it.setEditable(False)
-            it.setData(c, ROLE_DATA)
+            it.setData(p, ROLE_DATA)
             self.model.appendRow(it)
 
         fm = self.list.fontMetrics()
@@ -86,15 +104,15 @@ class PeopleView(SectionView):
         cell_w = 10 + TILE + 10
         self.list.setGridSize(QSize(cell_w, int(cell_h)))
 
-    def _find_model_row_by_cluster_id(self, cid: str) -> int:
+    def _find_model_row_by_person_id(self, pid: str) -> int:
         for row in range(self.model.rowCount()):
             data = self.model.item(row).data(ROLE_DATA)
-            if data and str(data.get("id")) == str(cid):
+            if data and str(data.get("id")) == str(pid):
                 return row
         return -1
 
-    def _update_cluster_label(self, cid: str, new_sug_count: int) -> None:
-        row = self._find_model_row_by_cluster_id(cid)
+    def _update_person_label(self, pid: str, new_sug_count: int) -> None:
+        row = self._find_model_row_by_person_id(pid)
         if row < 0:
             return
         it = self.model.item(row)
@@ -117,7 +135,6 @@ class PeopleView(SectionView):
         self.btn_back = QToolButton(self._page_detail)
         self.btn_back.setObjectName("ToolbarBtn")
         self.btn_back.setIcon(self.style().standardIcon(QStyle.SP_ArrowBack))
-        # ← back con “paso intermedio”
         self.btn_back.clicked.connect(self._on_back_clicked)
 
         lbl = QLabel("Sugerencias y elementos", self._page_detail)
@@ -144,16 +161,18 @@ class PeopleView(SectionView):
             w = self.detail_container.widget(0)
             self.detail_container.removeWidget(w)
             w.deleteLater()
-        self._current_cluster_id = None
+        self._current_person_id = None
         self.stack.setCurrentIndex(0)
         self.set_header_visible(True)
 
-    def _open_cluster(self, idx: QModelIndex) -> None:
+    def _open_person(self, idx: QModelIndex) -> None:
         data: Dict[str, Any] = idx.data(ROLE_DATA)
         if not data:
             return
 
-        self._current_cluster_id = str(data.get("id", ""))
+        self._current_person_id = str(data.get("id", ""))
+        person_title = data.get("title") or "Sin nombre"
+
         self.set_header_visible(False)
 
         while self.detail_container.count():
@@ -161,10 +180,23 @@ class PeopleView(SectionView):
             self.detail_container.removeWidget(w)
             w.deleteLater()
 
-        detail = PersonDetailView(cluster=data, parent=self._page_detail)
+        # DB si hay store, si no mock
+        if self.store:
+            detail = PersonDetailView(
+                person_id=int(self._current_person_id),
+                person_title=person_title,
+                store=self.store,
+                parent=self._page_detail
+            )
+        else:
+            detail = PersonDetailView(
+                cluster=data,  # usa el mock tal como lo tenías
+                parent=self._page_detail
+            )
+
         detail.suggestionCountChanged.connect(
-            lambda n, cid=self._current_cluster_id: self._update_cluster_label(
-                cid, n)
+            lambda n, pid=self._current_person_id: self._update_person_label(
+                pid, n)
         )
 
         self.detail_container.addWidget(detail)
@@ -176,13 +208,13 @@ class PeopleView(SectionView):
         out: list[Dict[str, Any]] = []
         for i in range(1, 9):
             out.append({
-                "id": f"c{i}",
+                "id": i,
                 "title": f"Persona {i}",
                 "cover": "",
                 "suggestions": [
-                    {"id": f"c{i}-s1", "thumb": ""},
-                    {"id": f"c{i}-s2", "thumb": ""},
-                    {"id": f"c{i}-s3", "thumb": ""},
+                    {"id": f"{i}-s1", "thumb": ""},
+                    {"id": f"{i}-s2", "thumb": ""},
+                    {"id": f"{i}-s3", "thumb": ""},
                 ],
                 "suggestions_count": 3,
             })
