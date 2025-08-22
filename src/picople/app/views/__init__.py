@@ -5,6 +5,7 @@ from .FoldersView import FoldersView
 from .FavoritesView import FavoritesView
 from .AlbumsView import AlbumsView
 from .PeopleView import PeopleView
+from .PersonDetailView import PersonDetailView
 from .ThingsView import ThingsView
 from .SearchView import SearchView
 from .SettingsView import SettingsView
@@ -22,6 +23,7 @@ __all__ = [
     "FavoritesView",
     "AlbumsView",
     "PeopleView",
+    "PersonDetailView",
     "ThingsView",
     "SearchView",
     "SettingsView",
