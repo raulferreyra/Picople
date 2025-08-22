@@ -1,21 +1,25 @@
 from __future__ import annotations
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap, QPainter
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QToolButton, QSizePolicy
-)
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QToolButton
+
 
 TILE = 160
-TILE_BTN_H = 28
 TILE_MARGIN = 8
+TILE_BTN_H = 28
 
 
 class SuggestionTile(QWidget):
-    """Tarjeta con miniatura y acciones: Aceptar, Rechazar y ‘tacho’ (descartar falso positivo)."""
-    acceptClicked = Signal(str)   # face_id (o mock id)
+    """
+    Tarjeta de sugerencia con: imagen, ✔, ✖, ⭐ y 🗑 (falso positivo).
+    Señales: acceptClicked(id), rejectClicked(id), coverClicked(id), discardClicked(id)
+    """
+    from PySide6.QtCore import Signal
+    acceptClicked = Signal(str)
     rejectClicked = Signal(str)
+    coverClicked = Signal(str)
     discardClicked = Signal(str)
 
     def __init__(self, sug_id: str, thumb_path: Optional[str] = None, parent: Optional[QWidget] = None):
@@ -23,7 +27,6 @@ class SuggestionTile(QWidget):
         self.sug_id = sug_id
         self.thumb_path = thumb_path
 
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.setFixedSize(TILE + 2*TILE_MARGIN, TILE +
                           TILE_BTN_H + 2*TILE_MARGIN)
 
@@ -37,9 +40,9 @@ class SuggestionTile(QWidget):
         self.lbl_img.setAlignment(Qt.AlignCenter)
         self._load_thumb()
 
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(6)
+        bar = QHBoxLayout()
+        bar.setContentsMargins(0, 0, 0, 0)
+        bar.setSpacing(6)
 
         self.btn_ok = QToolButton(self)
         self.btn_ok.setObjectName("ToolbarBtn")
@@ -53,20 +56,29 @@ class SuggestionTile(QWidget):
         self.btn_no.clicked.connect(
             lambda: self.rejectClicked.emit(self.sug_id))
 
-        row.addWidget(self.btn_ok)
-        row.addWidget(self.btn_no)
-        row.addStretch(1)
+        self.btn_star = QToolButton(self)
+        self.btn_star.setObjectName("ToolbarBtn")
+        self.btn_star.setText("⭐")
+        self.btn_star.setToolTip("Usar como portada")
+        self.btn_star.clicked.connect(
+            lambda: self.coverClicked.emit(self.sug_id))
+
+        bar.addWidget(self.btn_ok)
+        bar.addWidget(self.btn_no)
+        bar.addWidget(self.btn_star)
+        bar.addStretch(1)
 
         self.btn_trash = QToolButton(self)
         self.btn_trash.setObjectName("ToolbarBtn")
         self.btn_trash.setText("🗑")
         self.btn_trash.setFixedSize(28, 28)
+        self.btn_trash.setToolTip("Descartar (falso positivo)")
         self.btn_trash.clicked.connect(
             lambda: self.discardClicked.emit(self.sug_id))
         self.btn_trash.raise_()
 
         root.addWidget(self.lbl_img)
-        root.addLayout(row)
+        root.addLayout(bar)
 
     def _load_thumb(self):
         if self.thumb_path:

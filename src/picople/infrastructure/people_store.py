@@ -1,11 +1,15 @@
 # app/picople/src/picople/infrastructure/people_store.py
 from __future__ import annotations
-from typing import Optional, Iterable, Tuple, List, Dict, Any
+from typing import Optional, Tuple, List, Dict, Any
 
 import sqlite3
 import time
 
+from pathlib import Path
+
 from picople.infrastructure.db import Database
+from picople.core.paths import app_data_dir
+from .people_avatars import PeopleAvatarService
 
 
 class PeopleStore:
@@ -29,9 +33,103 @@ class PeopleStore:
         )
         self._conn.commit()
 
+    def _get_best_face_for_person(self, person_id: int) -> Optional[Tuple[int, str, str, float, float, float, float]]:
+        """
+        Devuelve (face_id, media_path, thumb_path, x, y, w, h) de la mejor cara:
+        mayor calidad y, si empata, más reciente.
+        """
+        cur = self._conn.cursor()
+        cur.execute("""
+            SELECT f.id, m.path, m.thumb_path, f.x, f.y, f.w, f.h
+            FROM person_face pf
+            JOIN faces f ON f.id = pf.face_id
+            JOIN media m ON m.id = f.media_id
+            WHERE pf.person_id = ?
+            ORDER BY COALESCE(f.quality, 0) DESC, f.ts DESC
+            LIMIT 1;
+        """, (person_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        return int(row[0]), row[1], (row[2] or row[1]), float(row[3]), float(row[4]), float(row[5]), float(row[6])
+
+    def _get_face_info(self, face_id: int) -> Optional[Tuple[str, str, float, float, float, float]]:
+        """
+        Devuelve (media_path, thumb_path, x, y, w, h) para una cara.
+        """
+        cur = self._conn.cursor()
+        cur.execute("""
+            SELECT m.path, m.thumb_path, f.x, f.y, f.w, f.h
+            FROM faces f
+            JOIN media m ON m.id = f.media_id
+            WHERE f.id = ?;
+        """, (face_id,))
+        r = cur.fetchone()
+        if not r:
+            return None
+        return r[0], (r[1] or r[0]), float(r[2]), float(r[3]), float(r[4]), float(r[5])
+
+    def _avatar_output_path(self, person_id: int) -> str:
+        base = app_data_dir() / "people" / "avatars"
+        return str(base / f"person_{person_id}.jpg")
+
+    def generate_cover_for_person(self, person_id: int, *, prefer_thumb: bool = True) -> Optional[str]:
+        """
+        Elige la mejor cara confirmada de la persona, genera avatar y actualiza persons.cover_path.
+        """
+        best = self._get_best_face_for_person(person_id)
+        if not best:
+            return None
+        face_id, media_path, thumb_path, x, y, w, h = best
+        src = thumb_path if prefer_thumb else media_path
+        out = self._avatar_output_path(person_id)
+        ok = PeopleAvatarService.crop_face_square(
+            src, (x, y, w, h), out_path=out)
+        if not ok:
+            return None
+        self.set_person_cover(person_id, out)
+        return out
+
+    def set_person_cover_from_face(self, person_id: int, face_id: int, *, prefer_thumb: bool = True) -> Optional[str]:
+        """
+        Genera la portada a partir de una cara específica (útil desde 'Sugerencias' → ⭐).
+        """
+        info = self._get_face_info(face_id)
+        if not info:
+            return None
+        media_path, thumb_path, x, y, w, h = info
+        src = thumb_path if prefer_thumb else media_path
+        out = self._avatar_output_path(person_id)
+        ok = PeopleAvatarService.crop_face_square(
+            src, (x, y, w, h), out_path=out)
+        if not ok:
+            return None
+        self.set_person_cover(person_id, out)
+        return out
+
+    def generate_covers_for_all(self, *, missing_only: bool = True) -> int:
+        """
+        Recorre todas las personas y genera portada:
+        - Si missing_only=True, solo para quienes no tienen cover_path.
+        Devuelve el número de portadas generadas.
+        """
+        cur = self._conn.cursor()
+        if missing_only:
+            cur.execute(
+                "SELECT id FROM persons WHERE cover_path IS NULL OR cover_path='';")
+        else:
+            cur.execute("SELECT id FROM persons;")
+        ids = [int(r[0]) for r in cur.fetchall()]
+        n = 0
+        for pid in ids:
+            if self.generate_cover_for_person(pid):
+                n += 1
+        return n
+
     # --------------------------------------------------------------------- #
     # Esquema
     # --------------------------------------------------------------------- #
+
     def _ensure_schema(self) -> None:
         cur = self._conn.cursor()
 
