@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import Optional
-from pathlib import Path
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QMenu
@@ -14,12 +13,14 @@ class AlbumDetailView(CollectionView):
     coverChanged = Signal(int, str)   # album_id, new_cover_path (thumb o path)
 
     def __init__(self, db: Optional[Database], album_id: int, title: str):
+        # embedded=True: no mostrar el header propio (lo maneja AlbumsView)
         super().__init__(
             db=db,
             title=title,
             subtitle="Fotos y videos del álbum.",
             favorites_only=False,
             album_id=album_id,
+            embedded=True,
         )
         self.album_id = album_id
 

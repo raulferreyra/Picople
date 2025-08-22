@@ -1,4 +1,6 @@
 from __future__ import annotations
+from typing import Optional
+
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QSizePolicy
 from PySide6.QtCore import Qt
 
@@ -6,12 +8,12 @@ from PySide6.QtCore import Qt
 class SectionView(QWidget):
     """
     Base de secciones con:
-    - Header compacto (título + subtítulo opcional)
+    - Header (título + subtítulo opcional) que se puede ocultar/mostrar
     - Separador fino
     - Área de contenido expansible (self.content_layout)
     """
 
-    def __init__(self, title: str, subtitle: str = "", *, compact: bool = True):
+    def __init__(self, title: str, subtitle: str = "", *, compact: bool = True, show_header: bool = True):
         super().__init__()
 
         root = QVBoxLayout(self)
@@ -19,8 +21,8 @@ class SectionView(QWidget):
         root.setSpacing(10 if compact else 12)
 
         # --- Header ---
-        header = QWidget()
-        header_lay = QVBoxLayout(header)
+        self._header_widget = QWidget()
+        header_lay = QVBoxLayout(self._header_widget)
         header_lay.setContentsMargins(0, 0, 0, 0)
         header_lay.setSpacing(4 if compact else 8)
 
@@ -37,13 +39,13 @@ class SectionView(QWidget):
             header_lay.addWidget(self.sub_lbl)
 
         # Separador fino
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setObjectName("SectionSeparator")
-        sep.setFixedHeight(1)
+        self._separator = QFrame()
+        self._separator.setFrameShape(QFrame.HLine)
+        self._separator.setObjectName("SectionSeparator")
+        self._separator.setFixedHeight(1)
 
-        root.addWidget(header)
-        root.addWidget(sep)
+        root.addWidget(self._header_widget)
+        root.addWidget(self._separator)
 
         # --- Body (expansible) ---
         body = QWidget()
@@ -57,3 +59,19 @@ class SectionView(QWidget):
 
         # Donde las vistas hijas deben añadir su contenido
         self.content_layout = body_lay
+
+        # Estado inicial del header
+        self.set_header_visible(show_header)
+
+    # --- API de control del header ---
+    def set_header(self, *, title: Optional[str] = None, subtitle: Optional[str] = None, show_subtitle: Optional[bool] = None):
+        if title is not None:
+            self.title_lbl.setText(title)
+        if subtitle is not None:
+            self.sub_lbl.setText(subtitle or "")
+        if show_subtitle is not None:
+            self.sub_lbl.setVisible(bool(show_subtitle))
+
+    def set_header_visible(self, visible: bool):
+        self._header_widget.setVisible(visible)
+        self._separator.setVisible(visible)

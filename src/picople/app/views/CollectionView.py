@@ -1,4 +1,3 @@
-# src/picople/app/views/CollectionView.py
 from __future__ import annotations
 from typing import Optional
 from pathlib import Path
@@ -22,6 +21,8 @@ class CollectionView(SectionView):
       - Filtro por tipo (Todo/Fotos/Videos)
       - Búsqueda por texto
       - Restricción a favoritos o a un álbum específico
+
+    Si embedded=True, oculta su propio header (se asume header externo).
     """
 
     def __init__(
@@ -31,9 +32,10 @@ class CollectionView(SectionView):
         title: str = "Colección",
         subtitle: str = "Todas tus fotos y videos en una grilla rápida.",
         favorites_only: bool = False,
-        album_id: Optional[int] = None
+        album_id: Optional[int] = None,
+        embedded: bool = False,
     ):
-        super().__init__(title, subtitle, compact=True)
+        super().__init__(title, subtitle, compact=True, show_header=not embedded)
         self.db = db
         self.favorites_only = favorites_only
         self.album_id = album_id
@@ -173,30 +175,25 @@ class CollectionView(SectionView):
     def _open_selected(self, index: QModelIndex):
         if not index.isValid():
             return
-
         items = [
             MediaItem(
-                path=it["path"], kind=it["kind"], mtime=it["mtime"],
-                size=it["size"], thumb_path=it.get("thumb_path"),
-                favorite=bool(it.get("favorite", False))
+                path=it["path"],
+                kind=it["kind"],
+                mtime=it["mtime"],
+                size=it["size"],
+                thumb_path=it.get("thumb_path"),
+                favorite=bool(it.get("favorite", False)),
             )
             for it in self.model.items
         ]
         start_idx = index.row()
-
+        # visor embebido
         win = QApplication.activeWindow()
         viewer = MediaViewerPanel(
-            items, start_idx, db=getattr(win, "_db", None), parent=win
-        )
-        # 🔗 actualizar corazón en la grilla sin recargar
-        viewer.favoriteToggled.connect(self.model.set_favorite_by_path)
-
-        # usa el método que SÍ tienes en MainWindow
+            items, start_idx, db=getattr(win, "_db", None), parent=win)
+        # reemplaza central por visor
         if hasattr(win, "_open_viewer_embedded_from"):
             win._open_viewer_embedded_from(viewer)
-        else:
-            # fallback a otra función existente (según tu versión)
-            self.window()._open_viewer_embedded(items, start_idx)
 
     def apply_runtime_settings(self, cfg: dict):
         tile = int(cfg.get("collection/tile_size", 160))

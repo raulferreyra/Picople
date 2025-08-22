@@ -13,14 +13,14 @@ from picople.app.views.SectionView import SectionView
 from picople.app.views.CollectionView import CollectionView
 from picople.app.views.AlbumDetailView import AlbumDetailView
 
-
 # almacena dict {'id':int|None, 'title':str, 'is_fav':bool}
 ROLE_DATA = Qt.UserRole + 100
 
 
 class AlbumsView(SectionView):
     def __init__(self, db: Optional[Database] = None):
-        super().__init__("Álbumes", "Organizados automáticamente por carpetas.", compact=True)
+        super().__init__("Álbumes", "Organizados automáticamente por carpetas.",
+                         compact=True, show_header=True)
         self.db = db
 
         self.stack = QStackedWidget()
@@ -30,7 +30,7 @@ class AlbumsView(SectionView):
         self._build_list_page()
         self._build_detail_page()
 
-        self.stack.addWidget(self._page_list)   # idx 0
+        self.stack.addWidget(self._page_list)    # idx 0
         self.stack.addWidget(self._page_detail)  # idx 1
 
         lay = self.content_layout
@@ -74,7 +74,8 @@ class AlbumsView(SectionView):
             it.setData({"id": None, "title": "Favoritos",
                        "is_fav": True}, ROLE_DATA)
             it.setEditable(False)
-            it.setForeground(QColor("#e6e8ee"))  # texto visible en tema oscuro
+            # No forzamos color si confías en tu QSS; si prefieres, comenta la línea siguiente:
+            # it.setForeground(QColor("#e6e8ee"))
             self.model.appendRow(it)
 
         # Álbumes reales
@@ -87,7 +88,7 @@ class AlbumsView(SectionView):
             it.setData({"id": a["id"], "title": title,
                        "is_fav": False}, ROLE_DATA)
             it.setEditable(False)
-            it.setForeground(QColor("#e6e8ee"))
+            # it.setForeground(QColor("#e6e8ee"))
             self.model.appendRow(it)
 
         # grid agradable a texto: alto para título+conteo
@@ -101,8 +102,12 @@ class AlbumsView(SectionView):
         data: Dict[str, Any] = idx.data(ROLE_DATA)
         if not data:
             return
+
+        # Al entrar a detalle ocultamos el header de la sección ("Álbumes")
+        self.set_header_visible(False)
+
         if data.get("is_fav"):
-            # colección filtrada a favoritos
+            # colección filtrada a favoritos (embed sin header propio)
             self._show_detail(
                 CollectionView(
                     db=self.db,
@@ -110,6 +115,7 @@ class AlbumsView(SectionView):
                     subtitle="Tus elementos favoritos.",
                     favorites_only=True,
                     album_id=None,
+                    embedded=True,
                 ),
                 title="Favoritos",
                 allow_rename=False,
@@ -117,6 +123,7 @@ class AlbumsView(SectionView):
         else:
             album_id = data["id"]
             title = data["title"]
+            # ya viene embebido (sin header propio)
             view = AlbumDetailView(self.db, album_id, title)
             view.coverChanged.connect(lambda _id, _p: self._reload_list())
             self._show_detail(view, title=title,
@@ -136,11 +143,11 @@ class AlbumsView(SectionView):
         self.btn_back = QToolButton()
         self.btn_back.setObjectName("ToolbarBtn")
         self.btn_back.setIcon(self.style().standardIcon(QStyle.SP_ArrowBack))
-        self.btn_back.clicked.connect(lambda: self.stack.setCurrentIndex(0))
+        self.btn_back.clicked.connect(self._go_back_to_list)
 
         self.lbl_title = QLabel("")
-        self.lbl_title.setObjectName(
-            "AlbumHeaderTitle")  # QSS lo pintará legible
+        # Usamos el mismo objectName que el header global para heredar estilos del tema
+        self.lbl_title.setObjectName("SectionTitle")
 
         self.btn_rename = QToolButton()
         self.btn_rename.setObjectName("ToolbarBtn")
@@ -157,6 +164,11 @@ class AlbumsView(SectionView):
         root.addWidget(self.detail_container, 1)
 
         self._current_album_id: Optional[int] = None
+
+    def _go_back_to_list(self):
+        # Volvemos a la grilla y restauramos el header de sección
+        self.stack.setCurrentIndex(0)
+        self.set_header_visible(True)
 
     def _show_detail(self, view_widget: QWidget, *, title: str, allow_rename: bool, album_id: Optional[int] = None):
         self._current_album_id = album_id
@@ -184,7 +196,7 @@ class AlbumsView(SectionView):
         if not title or title == old:
             return
         try:
-            # renombramos asegurando unicidad (simplemente intenta y si colisiona, avisa)
+            # renombramos; si colisiona por título UNIQUE, se verá el error
             cur = self.db.conn.cursor()
             cur.execute("UPDATE albums SET title=? WHERE id=?;",
                         (title, self._current_album_id))
