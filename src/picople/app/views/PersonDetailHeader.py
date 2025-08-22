@@ -3,16 +3,13 @@ from typing import Optional
 
 from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtGui import QPixmap, QPainter, QPainterPath
-from PySide6.QtWidgets import (
-    QWidget, QHBoxLayout, QLabel, QToolButton, QStyle
-)
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QToolButton, QStyle
 
 
 class PersonDetailHeader(QWidget):
     """
     Header compacto para el detalle de persona/mascota:
     [←]  (avatar redondo)  Nombre del cluster           [✎]
-          └── (clic en “Sugerencias”) opcional abajo en el contenedor
     """
     requestBack = Signal()
     requestRename = Signal()
@@ -38,7 +35,6 @@ class PersonDetailHeader(QWidget):
 
         # Título
         self.title_lbl = QLabel(title, self)
-        # heredamos estilos del tema (mismo objectName que headers de sección)
         self.title_lbl.setObjectName("SectionTitle")
         self.title_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
@@ -66,33 +62,24 @@ class PersonDetailHeader(QWidget):
         pm = QPixmap(size)
         pm.fill(Qt.transparent)
 
-        # base: imagen si existe; si no, usamos icono del sistema para placeholder
+        # Imagen o placeholder
         if cover:
             src = QPixmap(cover)
             if not src.isNull():
                 src = src.scaled(
                     size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-                # recorte centrado cuadrado
                 x = (src.width() - size.width()) // 2
                 y = (src.height() - size.height()) // 2
                 src = src.copy(x, y, size.width(), size.height())
             else:
-                src = self._placeholder_icon(size_px, kind)
+                src = self._placeholder(size_px, kind)
         else:
-            src = self._placeholder_icon(size_px, kind)
+            src = self._placeholder(size_px, kind)
 
         # máscara circular
-        mask = QPixmap(size)
-        mask.fill(Qt.transparent)
-        painter = QPainter(mask)
-        painter.setRenderHints(QPainter.Antialiasing |
-                               QPainter.SmoothPixmapTransform)
         path = QPainterPath()
         path.addEllipse(0, 0, size.width(), size.height())
-        painter.fillPath(path, Qt.white)
-        painter.end()
 
-        # pintar con clip circular
         painter = QPainter(pm)
         painter.setRenderHints(QPainter.Antialiasing |
                                QPainter.SmoothPixmapTransform)
@@ -112,12 +99,10 @@ class PersonDetailHeader(QWidget):
 
         return pm
 
-    def _placeholder_icon(self, size_px: int, kind: str) -> QPixmap:
-        # persona por defecto; si es "pet" usa otro estándar
+    def _placeholder(self, size_px: int, kind: str) -> QPixmap:
         sp = QStyle.SP_DirIcon if kind == "person" else QStyle.SP_DriveDVDIcon
         icon_pm = self.style().standardIcon(sp).pixmap(
             int(size_px*0.9), int(size_px*0.9))
-        # centrar sobre fondo acorde al tema
         base = QPixmap(size_px, size_px)
         base.fill(Qt.transparent)
         painter = QPainter(base)
@@ -125,7 +110,6 @@ class PersonDetailHeader(QWidget):
         bg = self.palette().window().color()
         bg = bg.lighter(105) if bg.value() < 128 else bg.darker(105)
         painter.fillRect(0, 0, size_px, size_px, bg)
-
         x = (size_px - icon_pm.width()) // 2
         y = (size_px - icon_pm.height()) // 2
         painter.drawPixmap(x, y, icon_pm)
