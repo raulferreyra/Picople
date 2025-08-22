@@ -28,6 +28,8 @@ class PeopleView(SectionView):
         self.stack = QStackedWidget()
         self._page_list = QWidget()
         self._page_detail = QWidget()
+        # <- contenedor fijo para detalle
+        self.detail_container: QStackedWidget | None = None
 
         self._build_list_page()
         self._build_detail_page()
@@ -59,9 +61,15 @@ class PeopleView(SectionView):
         self.list.setModel(self.model)
         root.addWidget(self.list, 1)
 
+    # ───────────────── Página detalle (contenedor fijo) ─────────────────
     def _build_detail_page(self) -> None:
-        # Se monta dinámicamente en _mount_detail
-        pass
+        root = QVBoxLayout(self._page_detail)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # Contenedor persistente para montar/desmontar el detalle
+        self.detail_container = QStackedWidget(self._page_detail)
+        root.addWidget(self.detail_container, 1)
 
     def _reload_list(self) -> None:
         self.model.clear()
@@ -90,6 +98,7 @@ class PeopleView(SectionView):
         if not data:
             return
 
+        # Oculta header de sección global para evitar doble título
         if hasattr(self, "set_header_visible"):
             self.set_header_visible(False)
 
@@ -100,20 +109,30 @@ class PeopleView(SectionView):
         self.stack.setCurrentIndex(1)
 
     def _mount_detail(self, widget: QWidget) -> None:
-        lay = QVBoxLayout(self._page_detail)
-        while lay.count():
-            item = lay.takeAt(0)
-            w = item.widget()
+        """Reemplaza el contenido del contenedor de detalle limpiando lo anterior."""
+        if not self.detail_container:
+            return
+        # Vaciar todo lo que hubiera antes
+        while self.detail_container.count():
+            w = self.detail_container.widget(0)
+            self.detail_container.removeWidget(w)
             if w:
                 w.deleteLater()
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
-        lay.addWidget(widget, 1)
+        # Montar el nuevo
+        self.detail_container.addWidget(widget)
+        self.detail_container.setCurrentWidget(widget)
 
     def _back_to_list(self) -> None:
         self.stack.setCurrentIndex(0)
         if hasattr(self, "set_header_visible"):
             self.set_header_visible(True)
+        # (Opcional) limpiar el contenedor para liberar memoria
+        if self.detail_container:
+            while self.detail_container.count():
+                w = self.detail_container.widget(0)
+                self.detail_container.removeWidget(w)
+                if w:
+                    w.deleteLater()
 
     # ───────────────── Mock data ─────────────────
     def _mock_clusters(self) -> List[Dict[str, Any]]:
