@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QLabel, QStyle
 )
 
+from picople.infrastructure.db import Database
 from .SectionView import SectionView
 from .PersonDetailView import PersonDetailView
 
@@ -23,9 +24,10 @@ class PeopleView(SectionView):
       • Página de detalle: inserta PersonDetailView y botón “volver”
     """
 
-    def __init__(self):
+    def __init__(self, db: Optional[Database] = None):
         super().__init__("Personas y mascotas", "Agrupación por caras (personas) y mascotas.",
                          compact=True, show_header=True)
+        self.db = db
 
         self.stack = QStackedWidget(self)
         self._page_list = QWidget(self)
