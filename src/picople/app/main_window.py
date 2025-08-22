@@ -48,6 +48,7 @@ class MainWindow(QMainWindow):
         self._index_thread: QThread | None = None
         self._indexer: IndexerWorker | None = None
         self._viewer_page: QWidget | None = None
+        self._viewer_prev_widget: QWidget | None = None
 
         # Abrir (o crear) DB cifrada antes de construir vistas
         self._open_database_or_prompt()
@@ -369,12 +370,19 @@ class MainWindow(QMainWindow):
             )
             for i in items
         ]
+
+        if self._viewer_prev_widget is None:
+            self._viewer_prev_widget = self.stack.currentWidget()
+
         if self._viewer_page is not None:
-            idx = self.stack.indexOf(self._viewer_page)
-            if idx >= 0:
-                w = self.stack.widget(idx)
-                self.stack.removeWidget(w)
-                w.deleteLater()
+            try:
+                idx = self.stack.indexOf(self._viewer_page)
+                if idx >= 0:
+                    w = self.stack.widget(idx)
+                    self.stack.removeWidget(w)
+                    w.deleteLater()
+            except Exception:
+                pass
             self._viewer_page = None
 
         self._viewer_page = MediaViewerPanel(
@@ -387,7 +395,10 @@ class MainWindow(QMainWindow):
 
     # visor embebido (si ya traes un widget construido)
     def _open_viewer_embedded_from(self, viewer_widget: QWidget):
-        if getattr(self, "_viewer_page", None):
+        if self._viewer_prev_widget is None:
+            self._viewer_prev_widget = self.stack.currentWidget()
+
+        if self._viewer_page is not None:
             try:
                 idx = self.stack.indexOf(self._viewer_page)
                 if idx >= 0:
@@ -396,6 +407,8 @@ class MainWindow(QMainWindow):
                     w.deleteLater()
             except Exception:
                 pass
+            self._viewer_page = None
+
         self._viewer_page = viewer_widget
         if hasattr(viewer_widget, "requestClose"):
             viewer_widget.requestClose.connect(self._close_viewer_embedded)
@@ -403,14 +416,30 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(viewer_widget)
 
     def _close_viewer_embedded(self):
+        target = self._viewer_prev_widget or self._pages.get("collection")
+
+        if target is not None:
+            try:
+                self.stack.setCurrentWidget(target)
+            except Exception:
+                # Si por alguna razón ya no está en el stack, caer a “Colección”
+                coll = self._pages.get("collection")
+                if coll:
+                    self.stack.setCurrentWidget(coll)
+
         if self._viewer_page is not None:
-            self.stack.setCurrentWidget(self._pages["collection"])
-            idx = self.stack.indexOf(self._viewer_page)
-            if idx >= 0:
-                w = self.stack.widget(idx)
-                self.stack.removeWidget(w)
-                w.deleteLater()
+            try:
+                idx = self.stack.indexOf(self._viewer_page)
+                if idx >= 0:
+                    w = self.stack.widget(idx)
+                    self.stack.removeWidget(w)
+                    w.deleteLater()
+            except Exception:
+                pass
             self._viewer_page = None
+
+        # Limpiar el “previo”
+        self._viewer_prev_widget = None
 
     def _update_theme_icon(self) -> None:
         self.btn_theme.setText("🌙" if self.dark_mode else "☀")
