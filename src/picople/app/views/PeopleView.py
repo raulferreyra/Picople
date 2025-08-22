@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import List, Dict, Any, Optional
 
 from PySide6.QtCore import Qt, QSize, QModelIndex
-from PySide6.QtGui import QIcon, QPixmap, QStandardItemModel, QStandardItem
+from PySide6.QtGui import QIcon, QStandardItemModel, QStandardItem
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QListView, QStackedWidget, QStyle
 )
@@ -16,8 +16,8 @@ ROLE_DATA = Qt.UserRole + 100
 class PeopleView(SectionView):
     """
     Lista de clusters (personas/mascotas) en grilla.
-    - Doble click abre PersonDetailView (con header propio).
-    - Entra/sale de detalle ocultando/mostrando el header de sección para evitar títulos duplicados.
+    - Doble click abre PersonDetailView (con su header local).
+    - Se oculta el header de sección global al entrar a detalle para evitar títulos duplicados.
     - Datos "mock" por ahora (sin DB).
     """
 
@@ -28,8 +28,8 @@ class PeopleView(SectionView):
         self.stack = QStackedWidget()
         self._page_list = QWidget()
         self._page_detail = QWidget()
-        # <- contenedor fijo para detalle
         self.detail_container: QStackedWidget | None = None
+        self._current_detail: Optional[PersonDetailView] = None
 
         self._build_list_page()
         self._build_detail_page()
@@ -67,7 +67,6 @@ class PeopleView(SectionView):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # Contenedor persistente para montar/desmontar el detalle
         self.detail_container = QStackedWidget(self._page_detail)
         root.addWidget(self.detail_container, 1)
 
@@ -105,20 +104,18 @@ class PeopleView(SectionView):
         detail = PersonDetailView(cluster=data, parent=self._page_detail)
         detail.requestBack.connect(self._back_to_list)
 
+        self._current_detail = detail
         self._mount_detail(detail)
         self.stack.setCurrentIndex(1)
 
     def _mount_detail(self, widget: QWidget) -> None:
-        """Reemplaza el contenido del contenedor de detalle limpiando lo anterior."""
         if not self.detail_container:
             return
-        # Vaciar todo lo que hubiera antes
         while self.detail_container.count():
             w = self.detail_container.widget(0)
             self.detail_container.removeWidget(w)
             if w:
                 w.deleteLater()
-        # Montar el nuevo
         self.detail_container.addWidget(widget)
         self.detail_container.setCurrentWidget(widget)
 
@@ -126,7 +123,7 @@ class PeopleView(SectionView):
         self.stack.setCurrentIndex(0)
         if hasattr(self, "set_header_visible"):
             self.set_header_visible(True)
-        # (Opcional) limpiar el contenedor para liberar memoria
+        self._current_detail = None
         if self.detail_container:
             while self.detail_container.count():
                 w = self.detail_container.widget(0)
@@ -137,6 +134,7 @@ class PeopleView(SectionView):
     # ───────────────── Mock data ─────────────────
     def _mock_clusters(self) -> List[Dict[str, Any]]:
         def mk_sugs(n: int) -> List[Dict[str, Any]]:
+            # thumb None = placeholder; id único
             return [{"id": f"sug_{i}", "thumb": None} for i in range(n)]
 
         return [
@@ -145,7 +143,7 @@ class PeopleView(SectionView):
             {"id": 2, "title": "Matías",     "kind": "person",
                 "cover": None, "count": 127, "suggestions": mk_sugs(4)},
             {"id": 3, "title": "Valentina",  "kind": "person",
-                "cover": None, "count": 91,  "suggestions": mk_sugs(8)},
+                "cover": None, "count": 69,  "suggestions": mk_sugs(8)},
             {"id": 4, "title": "Bowie",      "kind": "pet",
                 "cover": None, "count": 35,  "suggestions": mk_sugs(5)},
             {"id": 5, "title": "Abuela",     "kind": "person",
