@@ -1,4 +1,3 @@
-# src/picople/app/views/PersonDetailView.py
 from __future__ import annotations
 from typing import Dict, Any, List, Optional
 
@@ -82,7 +81,7 @@ class SuggestionTile(QWidget):
         if self.thumb_path:
             pm = QPixmap(self.thumb_path)
         else:
-            # placeholder simple
+            # placeholder simple, cuadrado
             pm = QPixmap(TILE, TILE)
             pm.fill(Qt.gray)
             p = QPainter(pm)
@@ -92,7 +91,6 @@ class SuggestionTile(QWidget):
             r = pm.rect().adjusted(24, 24, -24, -24)
             p.drawEllipse(r)
             p.end()
-        # ajustar a cuadrado (cover)
         if not pm.isNull():
             pm = pm.scaled(
                 TILE, TILE, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
@@ -100,7 +98,7 @@ class SuggestionTile(QWidget):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        # posicionar trash overlay en esquina superior derecha del thumb
+        # posiciona 🗑 en la esquina superior derecha del tile
         x = self.width() - TILE_MARGIN - self.btn_trash.width()
         y = TILE_MARGIN
         self.btn_trash.move(x, y)
@@ -108,21 +106,21 @@ class SuggestionTile(QWidget):
 
 class PersonDetailView(QWidget):
     """
-    Contenido del detalle de una persona/mascota.
-    Header local (dentro del detalle):
-      [Avatar redondo]  Título
-      [Botones tipo link: Todos | Sugerencias (N)]
+    Detalle de persona/mascota.
+    Header local:
+      [Avatar circular 40x40]  Título
+      [Links: Todos | Sugerencias (N)]
 
     Páginas:
-      - page_all: placeholder por ahora
-      - page_sugs: grilla de SuggestionTile con ✔ ✖ 🗑
+      - page_all: placeholder
+      - page_sugs: grilla de SuggestionTile
     """
-    requestBack = Signal()
     suggestionCountChanged = Signal(int)
 
     def __init__(self, cluster: Dict[str, Any], parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.cluster = cluster
+        # Copia mutable de sugerencias (in-memory por ahora)
         self._sugs: List[Dict[str, Any]] = list(cluster.get("suggestions", []))
 
         root = QVBoxLayout(self)
@@ -149,7 +147,7 @@ class PersonDetailView(QWidget):
         top.addWidget(self.lbl_avatar)
         top.addWidget(self.lbl_title, 1)
 
-        # Link buttons: Todos / Sugerencias
+        # Links: Todos / Sugerencias
         links = QHBoxLayout()
         links.setContentsMargins(0, 0, 0, 0)
         links.setSpacing(12)
@@ -175,7 +173,7 @@ class PersonDetailView(QWidget):
         self.stack = QStackedWidget(self)
         root.addWidget(self.stack, 1)
 
-        # Página ALL (placeholder de momento)
+        # Página ALL (placeholder)
         self.page_all = QWidget(self)
         la = QVBoxLayout(self.page_all)
         la.setContentsMargins(0, 0, 0, 0)
@@ -194,7 +192,6 @@ class PersonDetailView(QWidget):
 
         self.scroll = QScrollArea(self.page_sugs)
         self.scroll.setWidgetResizable(True)
-        # <- FIX: usar QFrame.NoFrame
         self.scroll.setFrameShape(QFrame.NoFrame)
 
         self.grid_host = QWidget(self.scroll)
@@ -209,11 +206,10 @@ class PersonDetailView(QWidget):
 
         # Estado inicial
         self._refresh_suggestions()
-        self.show_suggestions()  # arrancamos mostrando sugerencias
+        self.show_suggestions()  # arrancamos en “Sugerencias”
 
     # ───────── Header helpers ─────────
     def _set_avatar(self, cover_path: Optional[str]):
-        # redondo de 40x40 con cover o placeholder
         size = 40
         pm = QPixmap(size, size)
         pm.fill(Qt.transparent)
@@ -264,9 +260,6 @@ class PersonDetailView(QWidget):
 
         # poblar
         cols = max(1, self.width() // (TILE + 2*TILE_MARGIN + 12))
-        if cols < 1:
-            cols = 1
-
         for i, sug in enumerate(self._sugs):
             tile = SuggestionTile(sug_id=str(
                 sug["id"]), thumb_path=sug.get("thumb"))
@@ -281,7 +274,6 @@ class PersonDetailView(QWidget):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        # relayout al cambiar ancho
         if self.stack.currentWidget() is self.page_sugs:
             self._refresh_suggestions()
 
@@ -290,13 +282,13 @@ class PersonDetailView(QWidget):
         self._refresh_suggestions()
 
     def _on_accept(self, sug_id: str):
-        # TODO: mover a “miembros confirmados” del cluster y persistir en DB
+        # TODO: persistir como miembro confirmado del cluster
         self._remove_sug_by_id(sug_id)
 
     def _on_reject(self, sug_id: str):
-        # TODO: marcar como “no es esta persona/mascota” para no sugerir de nuevo
+        # TODO: registrar “no pertenece a este cluster” para no sugerir de nuevo
         self._remove_sug_by_id(sug_id)
 
     def _on_discard(self, sug_id: str):
-        # TODO: registrar como falso positivo (no es una cara válida; descartar muestra)
+        # TODO: registrar falso positivo (no es cara válida) y ocultar muestra
         self._remove_sug_by_id(sug_id)
