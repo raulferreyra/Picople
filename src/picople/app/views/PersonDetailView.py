@@ -2,29 +2,26 @@ from __future__ import annotations
 from typing import Optional, Dict, Any
 
 from PySide6.QtCore import Qt, Signal, QSize
-from PySide6.QtGui import QPixmap, QPainter, QPainterPath
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QToolButton, QStackedWidget,
-    QStyle, QFrame, QMessageBox
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QToolButton, QStackedWidget, QStyle, QInputDialog
 )
 
-from picople.infrastructure.db import Database
-# from .CollectionView import CollectionView  # ← se activará cuando filtremos por cluster
+from .PersonDetailHeader import PersonDetailHeader
+
+
+SUG_TILE = 160  # tamaño para futuros thumbnails en “Sugerencias”
 
 
 class PersonDetailView(QWidget):
     """
-    Detalle de un “cluster” (persona o mascota).
-
-    Header:
-      [<]   [avatar circular]   [Título (SectionTitle)]    [✎ Renombrar]   [Sugerencias]
-
-    Cuerpo:
-      - Stacked: “Fotos” y “Sugerencias” (placeholders hasta conectar DB/pipeline).
+    Detalle de un cluster (persona/mascota):
+      - Header propio con back, avatar circular, título y lápiz.
+      - Link “Sugerencias” encima de la grilla principal (por ahora placeholder).
+      - Stacked: Página “Todo” (futuro CollectionView filtrado) y “Sugerencias”.
     """
     requestBack = Signal()
 
-    def __init__(self, cluster: Dict[str, Any], db: Optional[Database], parent=None) -> None:
+    def __init__(self, *, cluster: Dict[str, Any], db=None, parent=None):
         super().__init__(parent)
         self.cluster = cluster
         self.db = db
@@ -33,125 +30,92 @@ class PersonDetailView(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(8)
 
-        # ───────── Header ─────────
-        hdr = QHBoxLayout()
-        hdr.setContentsMargins(0, 0, 0, 0)
-        hdr.setSpacing(10)
+        # ───────── Header
+        title = cluster.get("title") or "Sin nombre"
+        cover = cluster.get("cover")
+        kind = cluster.get("kind", "person")
+        self.header = PersonDetailHeader(
+            title=title, cover=cover, kind=kind, parent=self)
+        self.header.requestBack.connect(self.requestBack.emit)
+        self.header.requestRename.connect(self._rename_cluster)
+        root.addWidget(self.header)
 
-        self.btn_back = QToolButton()
-        self.btn_back.setObjectName("ToolbarBtn")
-        self.btn_back.setIcon(self.style().standardIcon(QStyle.SP_ArrowBack))
-        self.btn_back.clicked.connect(self.requestBack.emit)
+        # ───────── Subheader con “Sugerencias” (enlace)
+        link_row = QHBoxLayout()
+        link_row.setContentsMargins(0, 0, 0, 0)
+        link_row.setSpacing(8)
 
-        self.avatar = QLabel()
-        self.avatar.setFixedSize(40, 40)
-        self._set_avatar_pixmap(self.cluster.get("cover"))
+        self.link_sugs = QToolButton(self)
+        self.link_sugs.setObjectName("ToolbarBtn")
+        self.link_sugs.setText("Sugerencias")
+        self.link_sugs.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.link_sugs.setCursor(Qt.PointingHandCursor)
+        self.link_sugs.clicked.connect(lambda: self._stack.setCurrentIndex(1))
 
-        self.lbl_title = QLabel(self.cluster.get("title") or "Sin nombre")
-        self.lbl_title.setObjectName("SectionTitle")
-        self.lbl_title.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        link_row.addStretch(1)
+        link_row.addWidget(self.link_sugs)
+        root.addLayout(link_row)
 
-        self.btn_rename = QToolButton()
-        self.btn_rename.setObjectName("ToolbarBtn")
-        self.btn_rename.setText("✎")
-        self.btn_rename.setToolTip("Renombrar")
-        self.btn_rename.clicked.connect(self._rename_cluster)
+        # ───────── Contenido (stacked)
+        self._stack = QStackedWidget(self)
+        root.addWidget(self._stack, 1)
 
-        self.btn_sug = QToolButton()
-        self.btn_sug.setObjectName("ToolbarBtn")
-        self.btn_sug.setText("Sugerencias")
-        self.btn_sug.setToolTip("Ver/ocultar sugerencias")
-        self.btn_sug.setCheckable(True)
-        self.btn_sug.toggled.connect(self._toggle_suggestions)
+        # Página “Todo” (placeholder ahora)
+        self.page_all = QWidget(self)
+        lay_all = QVBoxLayout(self.page_all)
+        lay_all.setContentsMargins(0, 0, 0, 0)
+        lay_all.setSpacing(0)
+        lbl_all = QLabel(
+            "Aquí verás todas las fotos de esta persona/mascota.\n(Pronto: grilla filtrada por cluster)", self.page_all)
+        lbl_all.setAlignment(Qt.AlignCenter)
+        lbl_all.setObjectName("SectionText")
+        lay_all.addWidget(lbl_all, 1)
 
-        hdr.addWidget(self.btn_back)
-        hdr.addWidget(self.avatar)
-        hdr.addWidget(self.lbl_title, 1)
-        hdr.addWidget(self.btn_rename)
-        hdr.addWidget(self.btn_sug)
-        root.addLayout(hdr)
+        # Página “Sugerencias” (placeholder con explicación)
+        self.page_sugs = QWidget(self)
+        lay_sugs = QVBoxLayout(self.page_sugs)
+        lay_sugs.setContentsMargins(0, 0, 0, 0)
+        lay_sugs.setSpacing(8)
 
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setObjectName("SectionSeparator")
-        sep.setFixedHeight(1)
-        root.addWidget(sep)
+        hint = QLabel(
+            "Sugerencias de esta persona/mascota.\n\n"
+            "Aquí aparecerán tarjetas con:\n"
+            "   ✅ Confirmar  •  ❌ Rechazar  •  🗑️ No es imagen (falso positivo)\n\n"
+            "Por ahora no hay sugerencias; en el siguiente paso añadimos la grilla.",
+            self.page_sugs
+        )
+        hint.setAlignment(Qt.AlignCenter)
+        hint.setObjectName("SectionText")
+        lay_sugs.addWidget(hint, 1)
 
-        # ───────── Contenido ─────────
-        self.pages = QStackedWidget()
-        root.addWidget(self.pages, 1)
+        # Volver a “Todo”
+        nav_row = QHBoxLayout()
+        nav_row.setContentsMargins(0, 0, 0, 0)
+        nav_row.setSpacing(8)
+        btn_back_all = QToolButton(self.page_sugs)
+        btn_back_all.setObjectName("ToolbarBtn")
+        btn_back_all.setIcon(self.style().standardIcon(QStyle.SP_ArrowBack))
+        btn_back_all.setText("Volver")
+        btn_back_all.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        btn_back_all.clicked.connect(lambda: self._stack.setCurrentIndex(0))
+        nav_row.addStretch(1)
+        nav_row.addWidget(btn_back_all)
+        lay_sugs.addLayout(nav_row)
 
-        # Fotos (placeholder)
-        page_ph = QWidget()
-        lp = QVBoxLayout(page_ph)
-        lp.setContentsMargins(0, 0, 0, 0)
-        lp.setSpacing(8)
-        lbl_ph = QLabel("Aquí verás las fotos confirmadas de este rostro.\n"
-                        "Conectaremos el índice de caras en los siguientes pasos.")
-        lbl_ph.setAlignment(Qt.AlignCenter)
-        lbl_ph.setObjectName("SectionText")
-        lp.addWidget(lbl_ph, 1)
+        self._stack.addWidget(self.page_all)   # idx 0
+        self._stack.addWidget(self.page_sugs)  # idx 1
+        self._stack.setCurrentIndex(0)
 
-        # (cuando exista filtro por cluster_id → usar CollectionView(embedded=True))
-        # coll = CollectionView(db=self.db, title="", subtitle="", embedded=True)
-        # lp.addWidget(coll, 1)
-
-        # Sugerencias (placeholder)
-        page_sg = QWidget()
-        ls = QVBoxLayout(page_sg)
-        ls.setContentsMargins(0, 0, 0, 0)
-        ls.setSpacing(8)
-        lbl_sg = QLabel("Sugerencias para revisar:\n"
-                        "• ✓ Confirmar que pertenece a este rostro\n"
-                        "• ✗ Rechazar (mantener como desconocido)\n"
-                        "• 🗑️ No es una cara (falso positivo)")
-        lbl_sg.setAlignment(Qt.AlignCenter)
-        lbl_sg.setObjectName("SectionText")
-        ls.addWidget(lbl_sg, 1)
-
-        self.pages.addWidget(page_ph)  # 0
-        self.pages.addWidget(page_sg)  # 1
-        self.pages.setCurrentIndex(0)
-
-    # ───────── helpers ─────────
-    def _set_avatar_pixmap(self, cover_path: Optional[str]) -> None:
-        size = QSize(40, 40)
-        if cover_path:
-            pm = QPixmap(cover_path)
-        else:
-            sp = QStyle.SP_DialogYesButton if (self.cluster.get(
-                "kind") == "person") else QStyle.SP_DriveDVDIcon
-            pm = self.style().standardIcon(sp).pixmap(64, 64)
-
-        if pm.isNull():
-            self.avatar.clear()
+    # ───────── acciones
+    def _rename_cluster(self) -> None:
+        old = self.cluster.get("title") or "Sin nombre"
+        new, ok = QInputDialog.getText(self, "Renombrar", "", text=old)
+        if not ok:
+            return
+        name = new.strip()
+        if not name or name == old:
             return
 
-        pm = pm.scaled(size, Qt.KeepAspectRatioByExpanding,
-                       Qt.SmoothTransformation)
-        masked = QPixmap(size)
-        masked.fill(Qt.transparent)
-
-        p = QPainter(masked)
-        p.setRenderHints(QPainter.Antialiasing |
-                         QPainter.SmoothPixmapTransform)
-        path = QPainterPath()
-        path.addEllipse(0, 0, size.width(), size.height())
-        p.setClipPath(path)
-
-        x = (pm.width() - size.width()) // 2
-        y = (pm.height() - size.height()) // 2
-        p.drawPixmap(-x, -y, pm)
-        p.end()
-
-        self.avatar.setPixmap(masked)
-
-    def _toggle_suggestions(self, on: bool) -> None:
-        self.pages.setCurrentIndex(1 if on else 0)
-
-    def _rename_cluster(self) -> None:
-        # Hook listo para cuando tengamos tabla de clusters.
-        QMessageBox.information(
-            self, "Personas y mascotas",
-            "Renombrar estará disponible cuando activemos el índice de caras."
-        )
+        # Por ahora solo UI (cuando esté la tabla de clusters lo persistimos)
+        self.cluster["title"] = name
+        self.header.set_title(name)
