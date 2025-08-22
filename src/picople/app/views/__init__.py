@@ -1,38 +1,40 @@
 # src/picople/app/views/__init__.py
-from .SectionView import SectionView
-from .CollectionView import CollectionView
-from .FoldersView import FoldersView
-from .FavoritesView import FavoritesView
-from .AlbumsView import AlbumsView
-from .PeopleView import PeopleView
-from .PersonDetailView import PersonDetailView
-from .PersonDetailHeader import PersonDetailHeader
-from .ThingsView import ThingsView
-from .SearchView import SearchView
-from .SettingsView import SettingsView
-from .MediaViewer import MediaViewer
-from .ImageView import ImageView
-from .VideoView import VideoView
-from .MediaViewerPanel import MediaViewerPanel
-from .ViewerOverlay import ViewerOverlay
 from .AlbumDetailView import AlbumDetailView
+from .AlbumsView import AlbumsView
+from .CollectionView import CollectionView
+from .FavoritesView import FavoritesView
+from .FoldersView import FoldersView
+from .ImageView import ImageView
+from .MediaViewer import MediaViewer
+from .MediaViewerPanel import MediaViewerPanel
+from .PeopleView import PeopleView
+from .PersonDetailHeader import PersonDetailHeader
+from .PersonDetailView import PersonDetailView
+from .SearchView import SearchView
+from .SectionView import SectionView
+from .SettingsView import SettingsView
+from .SuggestionTile import SuggestionTile
+from .ThingsView import ThingsView
+from .VideoView import VideoView
+from .ViewerOverlay import ViewerOverlay
 
 __all__ = [
-    "SectionView",
-    "CollectionView",
-    "FoldersView",
-    "FavoritesView",
-    "AlbumsView",
-    "PeopleView",
-    "PersonDetailView",
-    "PersonDetailHeader",
-    "ThingsView",
-    "SearchView",
-    "SettingsView",
-    "MediaViewer",
-    "ImageView",
-    "VideoView",
-    "MediaViewerPanel",
-    "ViewerOverlay",
     "AlbumDetailView",
+    "AlbumsView",
+    "CollectionView",
+    "FavoritesView",
+    "FoldersView",
+    "ImageView",
+    "MediaViewer",
+    "MediaViewerPanel",
+    "PeopleView",
+    "PersonDetailHeader",
+    "PersonDetailView",
+    "SearchView",
+    "SectionView",
+    "SettingsView",
+    "SuggestionTile",
+    "ThingsView",
+    "VideoView",
+    "ViewerOverlay",
 ]
