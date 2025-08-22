@@ -1,4 +1,3 @@
-# src/picople/app/views/MediaViewerPanel.py
 from __future__ import annotations
 from typing import List, Optional
 from pathlib import Path
@@ -12,6 +11,7 @@ from PySide6.QtGui import QKeySequence, QShortcut, QFont
 
 from picople.infrastructure.db import Database
 from picople.app.controllers import MediaNavigator, MediaItem
+from picople.app.event_bus import bus
 from .ImageView import ImageView
 from .VideoView import VideoView
 
@@ -38,7 +38,6 @@ class MediaViewerPanel(QWidget):
         root.setSpacing(0)
 
         # ───────────────── Toolbar ─────────────────
-        # Usa los mismos objectName que tu QSS ya estiló
         self.tb = QToolBar()
         self.tb.setObjectName("MainToolbar")
         self.tb.setMovable(False)
@@ -54,7 +53,6 @@ class MediaViewerPanel(QWidget):
         self._style_btn(self.btn_close, "✕")
 
         self.btn_fav.setCheckable(True)
-        # Garantiza que ♥/♡ existan en la fuente
         self.btn_fav.setFont(
             QFont("Segoe UI Symbol", self.btn_fav.font().pointSize()))
 
@@ -63,7 +61,7 @@ class MediaViewerPanel(QWidget):
         self.act_fav = self.tb.addWidget(self.btn_fav)
         self.act_close = self.tb.addWidget(self.btn_close)
 
-        # Controles de IMAGEN (un único separador controlado)
+        # Controles de IMAGEN
         self.sep_img = self.tb.addSeparator()
         self.btn_fit = QToolButton()
         self._style_btn(self.btn_fit,      "Ajustar")
@@ -80,14 +78,14 @@ class MediaViewerPanel(QWidget):
         self.act_100 = self.tb.addWidget(self.btn_100)
         self.act_zin = self.tb.addWidget(self.btn_zoom_in)
         self.act_zout = self.tb.addWidget(self.btn_zoom_out)
-        self.act_rotate = self.tb.addWidget(self.btn_rotate)
+        self.act_rot = self.tb.addWidget(self.btn_rotate)
 
         self._img_actions = [
             self.sep_img, self.act_fit, self.act_100,
-            self.act_zin, self.act_zout, self.act_rotate
+            self.act_zin, self.act_zout, self.act_rot
         ]
 
-        # Controles de VIDEO (un único separador controlado)
+        # Controles de VIDEO
         self.sep_vid = self.tb.addSeparator()
         self.btn_playpause = QToolButton()
         self._style_btn(self.btn_playpause, "⏯")
@@ -131,7 +129,6 @@ class MediaViewerPanel(QWidget):
         li = QVBoxLayout(page_img)
         li.setContentsMargins(0, 0, 0, 0)
         li.addWidget(self.image_view)
-
         page_vid = QWidget()
         lv = QVBoxLayout(page_vid)
         lv.setContentsMargins(0, 0, 0, 0)
@@ -170,7 +167,6 @@ class MediaViewerPanel(QWidget):
         self.btn_mute.clicked.connect(self._toggle_mute)
         self.vol_slider.valueChanged.connect(self._set_volume)
 
-        # Señales del reproductor → UI
         self.video_view.positionChanged.connect(self._on_video_pos)
         self.video_view.durationChanged.connect(self._on_video_dur)
         self.video_view.mutedChanged.connect(
@@ -179,7 +175,7 @@ class MediaViewerPanel(QWidget):
         self.video_view.playingChanged.connect(
             lambda play: self.btn_playpause.setText("⏸" if play else "⏯"))
 
-        # Favoritos (no mutamos MediaItem; persistimos y notificamos)
+        # Favoritos
         self.btn_fav.toggled.connect(self._toggle_fav)
 
         # Atajos
@@ -245,7 +241,6 @@ class MediaViewerPanel(QWidget):
             self.stack.setCurrentIndex(1)
             self._apply_mode("video")
 
-        # sync favorito desde DB si existe; si no, usar el flag de MediaItem
         fav = None
         try:
             if self.db and self.db.is_open:
@@ -322,7 +317,6 @@ class MediaViewerPanel(QWidget):
         it = self.nav.current()
         if not it:
             return
-        # Persistimos en DB y reflejamos UI; NO mutamos MediaItem (es frozen).
         ok = True
         try:
             if self.db and self.db.is_open:
@@ -331,14 +325,15 @@ class MediaViewerPanel(QWidget):
             ok = False
 
         if not ok:
-            # Revertir visual si falló la DB
             self.btn_fav.blockSignals(True)
             self.btn_fav.setChecked(not checked)
             self.btn_fav.setText("♥" if not checked else "♡")
             self.btn_fav.blockSignals(False)
             return
 
-        # UI inmediata
         self.btn_fav.setText("♥" if checked else "♡")
-        # Notificar a la grilla para actualizar overlay sin recargar
-        self.favoriteToggled.emit(it.path, bool(checked))
+
+        # Notificaciones
+        self.favoriteToggled.emit(it.path, bool(checked))  # compat interna
+        # actualización global en vivo
+        bus.favoriteChanged.emit(it.path, bool(checked))

@@ -2,13 +2,14 @@ from __future__ import annotations
 from typing import Optional, Dict, Any
 
 from PySide6.QtCore import Qt, QSize, QModelIndex
-from PySide6.QtGui import QIcon, QPixmap, QStandardItem, QStandardItemModel, QColor
+from PySide6.QtGui import QIcon, QPixmap, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListView, QToolButton, QLabel,
     QStackedWidget, QInputDialog, QMessageBox, QStyle
 )
 
 from picople.infrastructure.db import Database
+from picople.app.event_bus import bus
 from picople.app.views.SectionView import SectionView
 from picople.app.views.CollectionView import CollectionView
 from picople.app.views.AlbumDetailView import AlbumDetailView
@@ -35,6 +36,9 @@ class AlbumsView(SectionView):
 
         lay = self.content_layout
         lay.addWidget(self.stack, 1)
+
+        # Escucha cambios de favoritos para refrescar conteo en el tile "Favoritos (N)"
+        bus.favoriteChanged.connect(self._on_any_favorite_changed)
 
         self._reload_list()
 
@@ -74,8 +78,6 @@ class AlbumsView(SectionView):
             it.setData({"id": None, "title": "Favoritos",
                        "is_fav": True}, ROLE_DATA)
             it.setEditable(False)
-            # No forzamos color si confías en tu QSS; si prefieres, comenta la línea siguiente:
-            # it.setForeground(QColor("#e6e8ee"))
             self.model.appendRow(it)
 
         # Álbumes reales
@@ -88,7 +90,6 @@ class AlbumsView(SectionView):
             it.setData({"id": a["id"], "title": title,
                        "is_fav": False}, ROLE_DATA)
             it.setEditable(False)
-            # it.setForeground(QColor("#e6e8ee"))
             self.model.appendRow(it)
 
         # grid agradable a texto: alto para título+conteo
@@ -123,7 +124,7 @@ class AlbumsView(SectionView):
         else:
             album_id = data["id"]
             title = data["title"]
-            # ya viene embebido (sin header propio)
+            # AlbumDetailView hereda CollectionView; el header propio ya se gestiona en AlbumsView
             view = AlbumDetailView(self.db, album_id, title)
             view.coverChanged.connect(lambda _id, _p: self._reload_list())
             self._show_detail(view, title=title,
@@ -146,7 +147,6 @@ class AlbumsView(SectionView):
         self.btn_back.clicked.connect(self._go_back_to_list)
 
         self.lbl_title = QLabel("")
-        # Usamos el mismo objectName que el header global para heredar estilos del tema
         self.lbl_title.setObjectName("SectionTitle")
 
         self.btn_rename = QToolButton()
@@ -166,7 +166,6 @@ class AlbumsView(SectionView):
         self._current_album_id: Optional[int] = None
 
     def _go_back_to_list(self):
-        # Volvemos a la grilla y restauramos el header de sección
         self.stack.setCurrentIndex(0)
         self.set_header_visible(True)
 
@@ -188,7 +187,6 @@ class AlbumsView(SectionView):
         if self._current_album_id is None or not self.db:
             return
         old = self.lbl_title.text()
-        # etiqueta vacía para evitar el QLabel "Título:" quemado (tema)
         new, ok = QInputDialog.getText(self, "Renombrar álbum", "", text=old)
         if not ok:
             return
@@ -196,7 +194,6 @@ class AlbumsView(SectionView):
         if not title or title == old:
             return
         try:
-            # renombramos; si colisiona por título UNIQUE, se verá el error
             cur = self.db.conn.cursor()
             cur.execute("UPDATE albums SET title=? WHERE id=?;",
                         (title, self._current_album_id))
@@ -205,3 +202,8 @@ class AlbumsView(SectionView):
             self._reload_list()
         except Exception as e:
             QMessageBox.warning(self, "Álbumes", f"No se pudo renombrar: {e}")
+
+    # ───────────────── Eventos globales ─────────────────
+    def _on_any_favorite_changed(self, path: str, fav: bool) -> None:
+        # El conteo de "Favoritos (N)" puede cambiar; reconstruimos lista.
+        self._reload_list()

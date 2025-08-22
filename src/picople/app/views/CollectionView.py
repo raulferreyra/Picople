@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import Optional
-from pathlib import Path
 
 from PySide6.QtCore import QSize, QModelIndex
 from PySide6.QtWidgets import (
@@ -9,6 +8,7 @@ from PySide6.QtWidgets import (
 
 from picople.infrastructure.db import Database
 from picople.app.controllers import MediaListModel, MediaItem
+from picople.app.event_bus import bus
 from .MediaViewerPanel import MediaViewerPanel
 from .SectionView import SectionView
 from .ThumbDelegate import ThumbDelegate
@@ -108,6 +108,9 @@ class CollectionView(SectionView):
         self.btn_reload.clicked.connect(self._on_filters_changed)
         self.view.verticalScrollBar().valueChanged.connect(self._maybe_fetch_more)
 
+        # Escucha cambios de favoritos en toda la app
+        bus.favoriteChanged.connect(self._on_fav_changed)
+
         self.refresh(reset=True)
 
     # -------- Lógica -------- #
@@ -187,14 +190,65 @@ class CollectionView(SectionView):
             for it in self.model.items
         ]
         start_idx = index.row()
-        # visor embebido
         win = QApplication.activeWindow()
         viewer = MediaViewerPanel(
-            items, start_idx, db=getattr(win, "_db", None), parent=win)
+            items, start_idx, db=getattr(win, "_db", None), parent=win
+        )
         # reemplaza central por visor
         if hasattr(win, "_open_viewer_embedded_from"):
             win._open_viewer_embedded_from(viewer)
 
+    # -------- Favoritos en vivo -------- #
+    def _on_fav_changed(self, path: str, fav: bool) -> None:
+        """
+        Reacciona a cambios de favorito en cualquier parte:
+        - Si el ítem está en este modelo, actualiza su flag y repinta.
+        - Si esta vista es 'solo favoritos' y se desmarca, lo quita al instante.
+        - Si es 'solo favoritos' y se marca desde otra vista, refresca light.
+        """
+        # ¿está en nuestra lista visible?
+        row = None
+        for i, it in enumerate(self.model.items):
+            if it.get("path") == path:
+                row = i
+                break
+
+        if row is not None:
+            # actualizar flag e icono
+            self.model.items[row]["favorite"] = fav
+            try:
+                mi = self.model.index(row)
+                self.model.dataChanged.emit(mi, mi)
+            except Exception:
+                self.model.layoutChanged.emit()
+
+            # si estamos filtrando a favoritos y ya no lo es → quitar del grid
+            if self.favorites_only and not fav:
+                try:
+                    del self.model.items[row]
+                    self.model.layoutChanged.emit()
+                except Exception:
+                    self.model.set_items(
+                        [x for x in self.model.items if x.get("path") != path])
+
+        else:
+            # No estaba en esta página. Si somos vista de favoritos y ahora ES fav, recarga suave.
+            if self.favorites_only and fav:
+                # Para no complicar inserción puntual, hacemos refresh (puedes optimizar luego).
+                self.refresh(reset=True)
+
+        # Actualizar contador si aplica
+        try:
+            if self.db and self.db.is_open and self.favorites_only:
+                self.total = self.db.count_media(favorites_only=True)
+                shown = len(self.model.items)
+                self.lbl_info.setText(
+                    f"Mostrando {shown}/{self.total}" if self.total else f"Mostrando {shown}"
+                )
+        except Exception:
+            pass
+
+    # -------- Settings en caliente -------- #
     def apply_runtime_settings(self, cfg: dict):
         tile = int(cfg.get("collection/tile_size", 160))
         batch = int(cfg.get("collection/batch", self.batch))
