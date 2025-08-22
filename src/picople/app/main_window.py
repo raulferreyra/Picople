@@ -117,7 +117,7 @@ class MainWindow(QMainWindow):
             "collection": views.CollectionView(db=self._db),
             "favorites":  views.FavoritesView(db=self._db),
             "albums":     views.AlbumsView(db=self._db),
-            "people":     views.PeopleView(),
+            "people":     views.PeopleView(db=self._db),
             "things":     views.ThingsView(),
             "folders":    views.FoldersView(),
             "search":     views.SearchView(),
