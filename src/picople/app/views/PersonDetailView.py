@@ -8,21 +8,15 @@ from PySide6.QtWidgets import (
     QScrollArea, QGridLayout, QSizePolicy, QFrame
 )
 
-TILE = 160          # lado de miniatura cuadrada
-TILE_BTN_H = 28     # alto de la fila de botones
+TILE = 160
+TILE_BTN_H = 28
 TILE_MARGIN = 8
 
 
 class SuggestionTile(QWidget):
-    """
-    Tile de sugerencia con:
-      - Thumb cuadrado (TILE x TILE)
-      - Fila de botones: ✔  ✖
-      - Botón 🗑 en esquina superior derecha (overlay)
-    """
-    acceptClicked = Signal(str)     # id
-    rejectClicked = Signal(str)     # id
-    discardClicked = Signal(str)    # id
+    acceptClicked = Signal(str)
+    rejectClicked = Signal(str)
+    discardClicked = Signal(str)
 
     def __init__(self, sug_id: str, thumb_path: Optional[str] = None, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -38,13 +32,11 @@ class SuggestionTile(QWidget):
                                 TILE_MARGIN, TILE_MARGIN)
         root.setSpacing(6)
 
-        # Thumb
         self.lbl_img = QLabel(self)
         self.lbl_img.setFixedSize(TILE, TILE)
         self.lbl_img.setAlignment(Qt.AlignCenter)
         self._load_thumb()
 
-        # Botonera
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
@@ -65,7 +57,6 @@ class SuggestionTile(QWidget):
         row.addWidget(self.btn_no)
         row.addStretch(1)
 
-        # Trash overlay (arriba a la derecha)
         self.btn_trash = QToolButton(self)
         self.btn_trash.setObjectName("ToolbarBtn")
         self.btn_trash.setText("🗑")
@@ -81,7 +72,6 @@ class SuggestionTile(QWidget):
         if self.thumb_path:
             pm = QPixmap(self.thumb_path)
         else:
-            # placeholder simple, cuadrado
             pm = QPixmap(TILE, TILE)
             pm.fill(Qt.gray)
             p = QPainter(pm)
@@ -98,7 +88,6 @@ class SuggestionTile(QWidget):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        # posiciona 🗑 en la esquina superior derecha del tile
         x = self.width() - TILE_MARGIN - self.btn_trash.width()
         y = TILE_MARGIN
         self.btn_trash.move(x, y)
@@ -120,14 +109,13 @@ class PersonDetailView(QWidget):
     def __init__(self, cluster: Dict[str, Any], parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.cluster = cluster
-        # Copia mutable de sugerencias (in-memory por ahora)
         self._sugs: List[Dict[str, Any]] = list(cluster.get("suggestions", []))
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 12, 16, 12)
         root.setSpacing(10)
 
-        # ───────── Header local ─────────
+        # Header
         hdr = QVBoxLayout()
         hdr.setContentsMargins(0, 0, 0, 0)
         hdr.setSpacing(6)
@@ -136,7 +124,6 @@ class PersonDetailView(QWidget):
         top.setContentsMargins(0, 0, 0, 0)
         top.setSpacing(8)
 
-        # Avatar circular
         self.lbl_avatar = QLabel(self)
         self.lbl_avatar.setFixedSize(40, 40)
         self._set_avatar(cluster.get("cover"))
@@ -147,7 +134,6 @@ class PersonDetailView(QWidget):
         top.addWidget(self.lbl_avatar)
         top.addWidget(self.lbl_title, 1)
 
-        # Links: Todos / Sugerencias
         links = QHBoxLayout()
         links.setContentsMargins(0, 0, 0, 0)
         links.setSpacing(12)
@@ -169,11 +155,10 @@ class PersonDetailView(QWidget):
         hdr.addLayout(links)
         root.addLayout(hdr)
 
-        # ───────── Contenido ─────────
+        # Contenido
         self.stack = QStackedWidget(self)
         root.addWidget(self.stack, 1)
 
-        # Página ALL (placeholder)
         self.page_all = QWidget(self)
         la = QVBoxLayout(self.page_all)
         la.setContentsMargins(0, 0, 0, 0)
@@ -184,7 +169,6 @@ class PersonDetailView(QWidget):
         la.addWidget(ph, 1, alignment=Qt.AlignTop)
         self.stack.addWidget(self.page_all)
 
-        # Página SUGS
         self.page_sugs = QWidget(self)
         ls = QVBoxLayout(self.page_sugs)
         ls.setContentsMargins(0, 0, 0, 0)
@@ -206,9 +190,13 @@ class PersonDetailView(QWidget):
 
         # Estado inicial
         self._refresh_suggestions()
-        self.show_suggestions()  # arrancamos en “Sugerencias”
+        self.show_all()  # ← por defecto abre en “Todos”
 
-    # ───────── Header helpers ─────────
+    # Expuesto para el botón “volver” en PeopleView
+    def is_on_suggestions(self) -> bool:
+        return self.stack.currentWidget() is self.page_sugs
+
+    # Header helpers
     def _set_avatar(self, cover_path: Optional[str]):
         size = 40
         pm = QPixmap(size, size)
@@ -238,7 +226,7 @@ class PersonDetailView(QWidget):
         self.btn_sugs.setText(f"Sugerencias ({n})")
         self.suggestionCountChanged.emit(n)
 
-    # ───────── Páginas ─────────
+    # Páginas
     def show_all(self):
         self.stack.setCurrentWidget(self.page_all)
         self.btn_all.setEnabled(False)
@@ -249,16 +237,14 @@ class PersonDetailView(QWidget):
         self.btn_all.setEnabled(True)
         self.btn_sugs.setEnabled(False)
 
-    # ───────── Sugerencias ─────────
+    # Sugerencias
     def _refresh_suggestions(self):
-        # limpiar grilla
         while self.grid.count():
             item = self.grid.takeAt(0)
             w = item.widget()
             if w:
                 w.deleteLater()
 
-        # poblar
         cols = max(1, self.width() // (TILE + 2*TILE_MARGIN + 12))
         for i, sug in enumerate(self._sugs):
             tile = SuggestionTile(sug_id=str(
@@ -286,9 +272,9 @@ class PersonDetailView(QWidget):
         self._remove_sug_by_id(sug_id)
 
     def _on_reject(self, sug_id: str):
-        # TODO: registrar “no pertenece a este cluster” para no sugerir de nuevo
+        # TODO: registrar “no pertenece a este cluster”
         self._remove_sug_by_id(sug_id)
 
     def _on_discard(self, sug_id: str):
-        # TODO: registrar falso positivo (no es cara válida) y ocultar muestra
+        # TODO: registrar falso positivo (no es cara válida)
         self._remove_sug_by_id(sug_id)

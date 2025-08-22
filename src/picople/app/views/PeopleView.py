@@ -68,7 +68,6 @@ class PeopleView(SectionView):
         for c in self._clusters:
             pm = QPixmap(c.get("cover") or "")
             if pm.isNull():
-                # placeholder gris uniforme con círculo claro
                 pm = QPixmap(TILE, TILE)
                 pm.fill(Qt.gray)
             icon = QIcon(pm)
@@ -80,7 +79,6 @@ class PeopleView(SectionView):
             it.setData(c, ROLE_DATA)
             self.model.appendRow(it)
 
-        # cuadrícula agradable: alto para título
         fm = self.list.fontMetrics()
         cell_h = 12 + TILE + 8 + fm.height() + 8
         cell_w = 10 + TILE + 10
@@ -110,7 +108,6 @@ class PeopleView(SectionView):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(8)
 
-        # Barra mínima con botón “volver” (el header visual con avatar vive en PersonDetailView)
         hdr = QHBoxLayout()
         hdr.setContentsMargins(0, 0, 0, 0)
         hdr.setSpacing(8)
@@ -118,7 +115,8 @@ class PeopleView(SectionView):
         self.btn_back = QToolButton(self._page_detail)
         self.btn_back.setObjectName("ToolbarBtn")
         self.btn_back.setIcon(self.style().standardIcon(QStyle.SP_ArrowBack))
-        self.btn_back.clicked.connect(self._go_back_to_list)
+        # ← back con “paso intermedio”
+        self.btn_back.clicked.connect(self._on_back_clicked)
 
         lbl = QLabel("Sugerencias y elementos", self._page_detail)
         lbl.setObjectName("SectionText")
@@ -128,12 +126,18 @@ class PeopleView(SectionView):
 
         root.addLayout(hdr)
 
-        # Contenedor del detalle
         self.detail_container = QStackedWidget(self._page_detail)
         root.addWidget(self.detail_container, 1)
 
+    def _on_back_clicked(self) -> None:
+        """Si estamos en Sugerencias, vuelve a Todos. Si ya estamos en Todos, vuelve a la lista."""
+        current = self.detail_container.currentWidget()
+        if isinstance(current, PersonDetailView) and current.is_on_suggestions():
+            current.show_all()
+            return
+        self._go_back_to_list()
+
     def _go_back_to_list(self) -> None:
-        # Limpia el widget embebido del detalle para evitar que “se quede pegado”
         while self.detail_container.count():
             w = self.detail_container.widget(0)
             self.detail_container.removeWidget(w)
@@ -150,15 +154,12 @@ class PeopleView(SectionView):
         self._current_cluster_id = str(data.get("id", ""))
         self.set_header_visible(False)
 
-        # Limpia contenedor
         while self.detail_container.count():
             w = self.detail_container.widget(0)
             self.detail_container.removeWidget(w)
             w.deleteLater()
 
-        # Inserta detalle
         detail = PersonDetailView(cluster=data, parent=self._page_detail)
-        # Cuando cambie el # de sugerencias en detalle, actualiza la fila en la lista
         detail.suggestionCountChanged.connect(
             lambda n, cid=self._current_cluster_id: self._update_cluster_label(
                 cid, n)
@@ -170,15 +171,13 @@ class PeopleView(SectionView):
 
     # ────────────────────────── Mock data ─────────────────────────
     def _mock_clusters(self) -> list[Dict[str, Any]]:
-        # Lo mínimo para visualizar: ids, títulos y conteo de sugerencias
-        # (las imágenes de cover pueden venir vacías; PersonDetailView pone avatar placeholder).
         out: list[Dict[str, Any]] = []
         for i in range(1, 9):
             out.append({
                 "id": f"c{i}",
                 "title": f"Persona {i}",
-                "cover": "",                 # sin ruta -> usa placeholder redondo
-                "suggestions": [             # cada sug: id + (thumb opcional)
+                "cover": "",
+                "suggestions": [
                     {"id": f"c{i}-s1", "thumb": ""},
                     {"id": f"c{i}-s2", "thumb": ""},
                     {"id": f"c{i}-s3", "thumb": ""},
