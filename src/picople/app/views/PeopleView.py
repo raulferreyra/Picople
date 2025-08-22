@@ -1,3 +1,4 @@
+# app/views/PeopleView.py
 from __future__ import annotations
 from typing import Dict, Any, Optional, List
 
@@ -15,6 +16,7 @@ from .PersonDetailView import PersonDetailView
 
 ROLE_DATA = Qt.UserRole + 100
 TILE = 160
+USE_MOCK_WHEN_EMPTY = True
 
 
 class PeopleView(SectionView):
@@ -81,14 +83,27 @@ class PeopleView(SectionView):
         root.addWidget(self.list, 1)
 
     def _reload_list(self) -> None:
-        """Carga desde DB si hay store; si no, usa mock."""
+        """Carga desde DB si hay store; si no, usa mock.
+        Si la DB está vacía y USE_MOCK_WHEN_EMPTY=True, cae a mock también.
+        """
         self.model.clear()
 
-        persons: List[Dict[str, Any]]
+        persons: List[Dict[str, Any]] = []
         if self.store:
-            persons = self.store.list_persons_with_suggestion_counts()
-        else:
-            persons = self._clusters_mock
+            try:
+                persons = self.store.list_persons_with_suggestion_counts()
+            except Exception:
+                persons = []
+
+        if not persons:
+            if self.store and not USE_MOCK_WHEN_EMPTY:
+                # --- Empty state sin mocks (si prefieres) ---
+                # it = QStandardItem(QIcon(), "Aún no hay personas. Ejecuta la indexación para detectarlas.")
+                # it.setEditable(False)
+                # self.model.appendRow(it)
+                pass
+            else:
+                persons = self._clusters_mock
 
         for p in persons:
             pm = QPixmap(p.get("cover") or "")
@@ -96,9 +111,11 @@ class PeopleView(SectionView):
                 pm = QPixmap(TILE, TILE)
                 pm.fill(Qt.gray)
             icon = QIcon(pm)
+
             title = p.get("title") or "Sin nombre"
-            sugs = int(p.get("suggestions_count", 0))
+            sugs = int(p.get("suggestions_count") or 0)
             text = f"{title}  ({sugs})"
+
             it = QStandardItem(icon, text)
             it.setEditable(False)
             it.setData(p, ROLE_DATA)
