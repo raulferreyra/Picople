@@ -49,7 +49,10 @@ class MainWindow(QMainWindow):
         self._indexer: IndexerWorker | None = None
         self._viewer_page: QWidget | None = None
 
+        # Abrir (o crear) DB cifrada antes de construir vistas
         self._open_database_or_prompt()
+
+        # UI
         self._build_ui()
         self._apply_theme()
 
@@ -324,13 +327,19 @@ class MainWindow(QMainWindow):
         self.progress_bg.hide()
         self.btn_update.setEnabled(True)
 
-        # reconstruir álbumes por carpetas
+        # reconstruir álbumes por carpetas + reparar duplicados/portadas
         try:
-            roots = get_root_dirs()
+            roots = self.get_roots_for_albums()
             if self._db and self._db.is_open:
                 self._db.rebuild_albums_from_media(roots)
+                self._db.repair_albums(roots)
         except Exception:
             pass
+
+        # refresca "albums" después
+        page = self._pages.get("albums")
+        if hasattr(page, "refresh"):
+            page.refresh()
 
         # refrescar vistas
         for key in ("collection", "favorites", "albums"):
@@ -351,7 +360,7 @@ class MainWindow(QMainWindow):
         )
         QTimer.singleShot(2000, lambda: self.status_label.setText("Listo"))
 
-    # visor embebido
+    # visor embebido (desde señales de CollectionView)
     def _open_viewer_embedded(self, items: list, start_index: int):
         media_items = [
             MediaItem(
@@ -376,6 +385,23 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self._viewer_page)
         self.stack.setCurrentWidget(self._viewer_page)
 
+    # visor embebido (si ya traes un widget construido)
+    def _open_viewer_embedded_from(self, viewer_widget: QWidget):
+        if getattr(self, "_viewer_page", None):
+            try:
+                idx = self.stack.indexOf(self._viewer_page)
+                if idx >= 0:
+                    w = self.stack.widget(idx)
+                    self.stack.removeWidget(w)
+                    w.deleteLater()
+            except Exception:
+                pass
+        self._viewer_page = viewer_widget
+        if hasattr(viewer_widget, "requestClose"):
+            viewer_widget.requestClose.connect(self._close_viewer_embedded)
+        self.stack.addWidget(viewer_widget)
+        self.stack.setCurrentWidget(viewer_widget)
+
     def _close_viewer_embedded(self):
         if self._viewer_page is not None:
             self.stack.setCurrentWidget(self._pages["collection"])
@@ -387,7 +413,6 @@ class MainWindow(QMainWindow):
             self._viewer_page = None
 
     def _update_theme_icon(self) -> None:
-        # Icono textual claro/oscuro
         self.btn_theme.setText("🌙" if self.dark_mode else "☀")
 
     def _open_database_or_prompt(self) -> None:
@@ -407,14 +432,19 @@ class MainWindow(QMainWindow):
             )
             if not ok or not pw:
                 QMessageBox.warning(
-                    self, "Picople", "Se necesita una clave para crear la base cifrada."
-                )
+                    self, "Picople", "Se necesita una clave para crear la base cifrada.")
                 self._db = None
                 self._db_key = None
                 return
             try:
                 self._db.open(pw)
                 self._db_key = pw
+                # Opcional: reparar (por si hay datos importados antiguos)
+                try:
+                    roots = self.get_roots_for_albums()
+                    self._db.repair_albums(roots)
+                except Exception:
+                    pass
                 QMessageBox.information(
                     self, "Picople", "Base de datos cifrada creada correctamente.")
             except DBError as e:
@@ -438,50 +468,24 @@ class MainWindow(QMainWindow):
             try:
                 self._db.open(pw)
                 self._db_key = pw
+                # **Importante**: reparar duplicados inmediatamente al abrir DB existente
+                try:
+                    roots = self.get_roots_for_albums()
+                    self._db.repair_albums(roots)
+                except Exception as e:
+                    print(f"[albums] repair on open failed: {e}")
             except DBError as e:
                 QMessageBox.critical(self, "Picople", str(e))
                 self._db = None
                 self._db_key = None
 
     def _on_backup(self):
-        # Placeholder por ahora; así no falla el botón
         QMessageBox.information(self, "Picople", "Backup aún no implementado.")
 
-    # persistencia
-
-    def _open_viewer_embedded_from(self, viewer_widget: QWidget):
-        """Inserta un viewer ya construido y navega a él."""
-        # Cierra uno anterior si existe
-        if getattr(self, "_viewer_page", None):
-            try:
-                idx = self.stack.indexOf(self._viewer_page)
-                if idx >= 0:
-                    w = self.stack.widget(idx)
-                    self.stack.removeWidget(w)
-                    w.deleteLater()
-            except Exception:
-                pass
-        self._viewer_page = viewer_widget
-        if hasattr(viewer_widget, "requestClose"):
-            viewer_widget.requestClose.connect(self._close_viewer_embedded)
-        self.stack.addWidget(viewer_widget)
-        self.stack.setCurrentWidget(viewer_widget)
-
-    def _close_viewer_embedded(self):
-        """Vuelve a la colección y limpia el viewer embebido."""
-        coll = self._pages.get("collection")
-        if coll:
-            self.stack.setCurrentWidget(coll)
-        if getattr(self, "_viewer_page", None):
-            try:
-                idx = self.stack.indexOf(self._viewer_page)
-                if idx >= 0:
-                    w = self.stack.widget(idx)
-                    self.stack.removeWidget(w)
-                    w.deleteLater()
-            except Exception:
-                pass
-            self._viewer_page = None
+    # Helpers de albums
+    def get_roots_for_albums(self) -> list[str]:
+        from picople.core.config import get_root_dirs
+        return get_root_dirs()
 
     def closeEvent(self, event) -> None:
         try:

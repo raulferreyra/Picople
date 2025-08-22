@@ -1,8 +1,7 @@
-# src/picople/infrastructure/db.py
 from __future__ import annotations
 import os
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional, List
 
 _sqlcipher_mod = None
 try:
@@ -24,7 +23,7 @@ class Database:
     Tablas:
       - folders(path UNIQUE)
       - media(path UNIQUE, kind, mtime, size, thumb_path, favorite)
-      - albums(id, title UNIQUE, cover_path)
+      - albums(id, title UNIQUE, cover_path, folder_key UNIQUE-ish)
       - album_media(album_id, media_id, position)
     """
 
@@ -86,28 +85,26 @@ class Database:
 
         # folders
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS folders(
-                id   INTEGER PRIMARY KEY AUTOINCREMENT,
-                path TEXT NOT NULL UNIQUE
-            );
-        """)
+                CREATE TABLE IF NOT EXISTS folders(
+                    id   INTEGER PRIMARY KEY AUTOINCREMENT,
+                    path TEXT NOT NULL UNIQUE
+                );
+            """)
 
         # media
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS media(
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                path       TEXT NOT NULL UNIQUE,
-                kind       TEXT NOT NULL,     -- 'image' | 'video'
-                mtime      INTEGER NOT NULL,
-                size       INTEGER NOT NULL,
-                thumb_path TEXT,
-                favorite   INTEGER NOT NULL DEFAULT 0
-            );
-        """)
-        # Migración: favorite si faltara
+                CREATE TABLE IF NOT EXISTS media(
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    path       TEXT NOT NULL UNIQUE,
+                    kind       TEXT NOT NULL,     -- 'image' | 'video'
+                    mtime      INTEGER NOT NULL,
+                    size       INTEGER NOT NULL,
+                    thumb_path TEXT,
+                    favorite   INTEGER NOT NULL DEFAULT 0
+                );
+            """)
         self._add_column_if_missing(
             "media", "favorite", "INTEGER NOT NULL DEFAULT 0")
-
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_media_mtime ON media(mtime);")
         cur.execute(
@@ -115,23 +112,37 @@ class Database:
 
         # albums
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS albums(
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                title      TEXT NOT NULL UNIQUE,
-                cover_path TEXT
-            );
-        """)
+                CREATE TABLE IF NOT EXISTS albums(
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title      TEXT NOT NULL UNIQUE,
+                    cover_path TEXT,
+                    folder_key TEXT
+                );
+            """)
+        self._add_column_if_missing("albums", "folder_key", "TEXT")
+        # Índice único robusto: intenta con WHERE ... NOT NULL (si versión soporta) y fallback sin WHERE
+        try:
+            cur.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_albums_folder_key ON albums(folder_key) WHERE folder_key IS NOT NULL;"
+            )
+        except Exception:
+            try:
+                cur.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_albums_folder_key ON albums(folder_key);"
+                )
+            except Exception:
+                pass
 
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS album_media(
-                album_id INTEGER NOT NULL,
-                media_id INTEGER NOT NULL,
-                position INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY(album_id, media_id),
-                FOREIGN KEY(album_id) REFERENCES albums(id) ON DELETE CASCADE,
-                FOREIGN KEY(media_id) REFERENCES media(id)  ON DELETE CASCADE
-            );
-        """)
+                CREATE TABLE IF NOT EXISTS album_media(
+                    album_id INTEGER NOT NULL,
+                    media_id INTEGER NOT NULL,
+                    position INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY(album_id, media_id),
+                    FOREIGN KEY(album_id) REFERENCES albums(id) ON DELETE CASCADE,
+                    FOREIGN KEY(media_id) REFERENCES media(id)  ON DELETE CASCADE
+                );
+            """)
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_album_media_album ON album_media(album_id);")
 
@@ -147,14 +158,14 @@ class Database:
         cur = self.conn.cursor()
         try:
             cur.execute("""
-                INSERT INTO media(path, kind, mtime, size, thumb_path)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(path) DO UPDATE SET
-                    kind=excluded.kind,
-                    mtime=excluded.mtime,
-                    size=excluded.size,
-                    thumb_path=excluded.thumb_path;
-            """, (path, kind, mtime, size, thumb_path))
+                    INSERT INTO media(path, kind, mtime, size, thumb_path)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(path) DO UPDATE SET
+                        kind=excluded.kind,
+                        mtime=excluded.mtime,
+                        size=excluded.size,
+                        thumb_path=excluded.thumb_path;
+                """, (path, kind, mtime, size, thumb_path))
         except Exception:
             cur.execute("UPDATE media SET kind=?, mtime=?, size=?, thumb_path=? WHERE path=?;",
                         (kind, mtime, size, thumb_path, path))
@@ -256,25 +267,25 @@ class Database:
     def list_albums(self) -> list[dict]:
         cur = self.conn.cursor()
         cur.execute("""
-            SELECT a.id, a.title, a.cover_path, COUNT(am.media_id)
-            FROM albums a
-            LEFT JOIN album_media am ON am.album_id=a.id
-            GROUP BY a.id
-            ORDER BY a.title COLLATE NOCASE;
-        """)
+                SELECT a.id, a.title, a.cover_path, COUNT(am.media_id)
+                FROM albums a
+                LEFT JOIN album_media am ON am.album_id=a.id
+                GROUP BY a.id
+                ORDER BY a.title COLLATE NOCASE;
+            """)
         rows = cur.fetchall()
         return [{"id": r[0], "title": r[1], "cover_path": r[2], "count": r[3]} for r in rows]
 
     def fetch_album_media(self, album_id: int, offset: int, limit: int) -> list[dict]:
         cur = self.conn.cursor()
         cur.execute("""
-            SELECT m.path, m.kind, m.mtime, m.size, m.thumb_path, m.favorite
-            FROM album_media am
-            JOIN media m ON m.id = am.media_id
-            WHERE am.album_id=?
-            ORDER BY m.mtime DESC
-            LIMIT ? OFFSET ?;
-        """, (album_id, limit, offset))
+                SELECT m.path, m.kind, m.mtime, m.size, m.thumb_path, m.favorite
+                FROM album_media am
+                JOIN media m ON m.id = am.media_id
+                WHERE am.album_id=?
+                ORDER BY m.mtime DESC
+                LIMIT ? OFFSET ?;
+            """, (album_id, limit, offset))
         rows = cur.fetchall()
         return [{
             "path": r[0], "kind": r[1], "mtime": int(r[2]), "size": int(r[3]),
@@ -293,56 +304,163 @@ class Database:
         r = cur.fetchone()
         return int(r[0]) if r else None
 
-    def _get_or_create_album(self, title: str) -> int:
+    def _normalize_rel(self, rel: str) -> str:
+        # normaliza separadores, caso y quita slashes inicial/final
+        return rel.replace("\\", "/").strip("/").lower()
+
+    def _roots_normalized(self, roots: list[str]) -> list[str]:
+        n = []
+        for r in roots:
+            rp = Path(r)
+            n.append(str(rp.resolve()).replace(
+                "\\", "/").lower().rstrip("/") + "/")
+        return n
+
+    def _folder_key_from_path(self, abs_path: str, nroots: List[str]) -> Optional[str]:
+        """
+        Devuelve la ruta relativa del directorio contenedor (carpeta del álbum)
+        tomando la RAÍZ MÁS LARGA que haga match (para raíces superpuestas).
+        Normaliza a minúsculas y '/'.
+        """
+        pnorm = str(Path(abs_path).resolve()).replace("\\", "/").lower()
+        base_match = None
+        best_len = -1
+        for base in nroots:
+            if pnorm.startswith(base) and len(base) > best_len:
+                base_match = base
+                best_len = len(base)
+        if base_match is None:
+            return None
+        rel = pnorm[len(base_match):]
+        parent_dir = os.path.dirname(rel)  # ej: amigos/cumpleaños/carlos 2025
+        if not parent_dir:
+            return None
+        return self._normalize_rel(parent_dir)
+
+    def _default_title_from_folder_key(self, folder_key: str) -> str:
+        # "amigos/cumpleaños/carlos 2025" -> "Amigos - Cumpleaños - Carlos 2025"
+        parts = [p for p in folder_key.split("/") if p]
+        titled = [p[:1].upper() + p[1:] if p else p for p in parts]
+        return " - ".join(titled) if titled else "(Sin título)"
+
+    def _get_or_create_album_by_key(self, folder_key: str, default_title: str) -> int:
         cur = self.conn.cursor()
-        cur.execute("SELECT id FROM albums WHERE title=?;", (title,))
+        # 1) ¿ya existe por folder_key?
+        cur.execute("SELECT id FROM albums WHERE folder_key=?;", (folder_key,))
         row = cur.fetchone()
         if row:
             return int(row[0])
-        cur.execute("INSERT INTO albums(title) VALUES(?);", (title,))
+
+        # 2) Compatibilidad: ¿álbum antiguo con título autogenerado?
+        cur.execute(
+            "SELECT id, folder_key FROM albums WHERE title=?;", (default_title,))
+        row = cur.fetchone()
+        if row:
+            aid = int(row[0])
+            if row[1] is None:
+                cur.execute(
+                    "UPDATE albums SET folder_key=? WHERE id=?;", (folder_key, aid))
+                self.conn.commit()
+            return aid
+
+        # 3) Crear uno nuevo
+        cur.execute("INSERT INTO albums(title, folder_key) VALUES(?, ?);",
+                    (default_title, folder_key))
         self.conn.commit()
         return int(cur.lastrowid)
 
+    def rename_album(self, album_id: int, new_title: str) -> None:
+        cur = self.conn.cursor()
+        cur.execute("UPDATE albums SET title=? WHERE id=?;",
+                    (new_title, album_id))
+        self.conn.commit()
+
+    def dedupe_albums_by_folder_key(self) -> None:
+        """
+        Une álbumes duplicados con el mismo folder_key.
+        Conserva el de menor id; migra medias y portada; borra duplicados.
+        (Usado como pasada extra de seguridad.)
+        """
+        cur = self.conn.cursor()
+        cur.execute("""
+                SELECT folder_key, GROUP_CONCAT(id)
+                FROM albums
+                WHERE folder_key IS NOT NULL
+                GROUP BY folder_key
+                HAVING COUNT(*) > 1;
+            """)
+        groups = cur.fetchall()
+        for folder_key, idlist in groups:
+            ids = [int(x) for x in str(idlist).split(",") if x]
+            if len(ids) < 2:
+                continue
+            ids.sort()
+            keep = ids[0]
+            for dup in ids[1:]:
+                # move media links
+                cur.execute("""
+                        INSERT OR IGNORE INTO album_media(album_id, media_id, position)
+                        SELECT ?, media_id, position FROM album_media WHERE album_id=?;
+                    """, (keep, dup))
+                # adopt cover if keep has none
+                cur.execute(
+                    "SELECT cover_path FROM albums WHERE id=?;", (keep,))
+                kcover = cur.fetchone()
+                cur.execute(
+                    "SELECT cover_path FROM albums WHERE id=?;", (dup,))
+                dcover = cur.fetchone()
+                if kcover and dcover and (kcover[0] is None) and (dcover[0] is not None):
+                    cur.execute(
+                        "UPDATE albums SET cover_path=? WHERE id=?;", (dcover[0], keep))
+                # delete dup
+                cur.execute(
+                    "DELETE FROM album_media WHERE album_id=?;", (dup,))
+                cur.execute("DELETE FROM albums WHERE id=?;", (dup,))
+        self.conn.commit()
+
+    # -------------------- Reconstrucción por carpetas -------------------- #
     def rebuild_albums_from_media(self, roots: List[str]) -> None:
         """
-        Autogenera álbumes a partir de la ruta relativa a cada raíz.
-        Ej.: .../Amigos/Cumpleaños/Carlos 2025/archivo.jpg -> "Amigos - Cumpleaños - Carlos 2025"
+        Autogenera álbumes a partir de la **carpeta** del media (llave estable folder_key),
+        sin alterar títulos existentes. Completa folder_key cuando falte.
         """
         cur = self.conn.cursor()
         cur.execute("SELECT id, path, thumb_path FROM media;")
         rows = cur.fetchall()
-        # normaliza raíces para matching robusto
-        nroots = []
-        for r in roots:
-            rp = Path(r)
-            nroots.append(str(rp.resolve()).replace("\\", "/").lower() + "/")
+
+        nroots = self._roots_normalized(roots)
 
         for mid, mpath, mthumb in rows:
-            pnorm = str(Path(mpath).resolve()).replace("\\", "/").lower()
-            best_rel = None
-            for base in nroots:
-                if pnorm.startswith(base):
-                    rel = pnorm[len(base):]
-                    best_rel = rel
-                    break
-            if not best_rel:
+            folder_key = self._folder_key_from_path(mpath, nroots)
+            if not folder_key:
                 continue
-            parent_dir = os.path.dirname(best_rel)
-            if not parent_dir:
-                continue
-            parts = [x for x in Path(parent_dir).parts if x]
-            if not parts:
-                continue
-            title = " - ".join(parts)  # puedes limitar niveles si deseas
 
-            album_id = self._get_or_create_album(title)
-            # vínculo (si no existe)
+            default_title = self._default_title_from_folder_key(folder_key)
+
+            # Si la media ya está en algún álbum, reutiliza ese álbum y completa folder_key si falta
+            cur.execute(
+                "SELECT album_id FROM album_media WHERE media_id=? LIMIT 1;", (mid,))
+            link = cur.fetchone()
+            if link:
+                album_id = int(link[0])
+                cur.execute(
+                    "SELECT folder_key FROM albums WHERE id=?;", (album_id,))
+                fkey = cur.fetchone()
+                if fkey and fkey[0] is None:
+                    cur.execute(
+                        "UPDATE albums SET folder_key=? WHERE id=?;", (folder_key, album_id))
+                    self.conn.commit()
+            else:
+                album_id = self._get_or_create_album_by_key(
+                    folder_key, default_title)
+
+            # vincula media -> álbum
             cur.execute("""
-                INSERT OR IGNORE INTO album_media(album_id, media_id, position)
-                VALUES (?, ?, 0);
-            """, (album_id, mid))
+                    INSERT OR IGNORE INTO album_media(album_id, media_id, position)
+                    VALUES (?, ?, 0);
+                """, (album_id, mid))
 
-            # portada por defecto si no hay
+            # portada por defecto si no tiene
             cur.execute(
                 "SELECT cover_path FROM albums WHERE id=?;", (album_id,))
             cover = cur.fetchone()
@@ -352,8 +470,148 @@ class Database:
 
         self.conn.commit()
 
-    def rename_album(self, album_id: int, new_title: str) -> None:
+        # Pasada extra para unir duplicados residuales
+        self.dedupe_albums_by_folder_key()
+
+    # -------------------- Reparación “a posteriori” -------------------- #
+    def _infer_folder_key_for_album(self, album_id: int, nroots: list[str]) -> Optional[str]:
+        """
+        Folder_key canónico deducido de las medias del álbum (usa raíz más larga).
+        """
         cur = self.conn.cursor()
-        cur.execute("UPDATE albums SET title=? WHERE id=?;",
-                    (new_title, album_id))
+        cur.execute("""
+                SELECT m.path
+                FROM album_media am
+                JOIN media m ON m.id = am.media_id
+                WHERE am.album_id = ?;
+            """, (album_id,))
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        counts: dict[str, int] = {}
+        for (path,) in rows:
+            fk = self._folder_key_from_path(path, nroots)
+            if fk:
+                counts[fk] = counts.get(fk, 0) + 1
+        if not counts:
+            return None
+        return max(counts.items(), key=lambda kv: kv[1])[0]
+
+    def repair_albums(self, roots: list[str]) -> None:
+        """
+        Repara álbumes existentes:
+          1) Calcula un folder_key CANÓNICO por álbum (inferido de sus medias) usando la raíz más larga.
+          2) Agrupa por ese folder_key y fusiona duplicados:
+             - Conserva el de título PERSONALIZADO (distinto del título por defecto).
+             - Si ninguno es personalizado, conserva el de id menor.
+             - Migra medias y portada, borra duplicados.
+          3) Establece el folder_key canónico en el álbum que se conserva.
+          4) Elimina álbumes VACÍOS (sin medias).
+          5) Reintenta crear el índice único de folder_key.
+        """
+        cur = self.conn.cursor()
+        nroots = self._roots_normalized(roots)
+
+        # Cargar álbumes
+        cur.execute("SELECT id, title, folder_key, cover_path FROM albums;")
+        albums = {int(r[0]): {"title": r[1], "folder_key": r[2],
+                              "cover": r[3]} for r in cur.fetchall()}
+
+        # 1) Calcular folder_key CANÓNICO por álbum (no confiamos en el guardado)
+        canon_fk: dict[int, Optional[str]] = {}
+        for aid in list(albums.keys()):
+            fk_inf = self._infer_folder_key_for_album(aid, nroots)
+            canon_fk[aid] = fk_inf
+
+        # 2) Agrupar por folder_key canónico
+        groups: dict[str, list[int]] = {}
+        for aid, fk in canon_fk.items():
+            if not fk:
+                continue
+            groups.setdefault(fk, []).append(aid)
+
+        # Fusión por grupo
+        for fk, ids in groups.items():
+            if len(ids) < 2:
+                # Si el álbum único no tiene folder_key guardado, fija el canónico
+                aid = ids[0]
+                if albums[aid]["folder_key"] != fk:
+                    try:
+                        cur.execute(
+                            "UPDATE albums SET folder_key=? WHERE id=?;", (fk, aid))
+                        albums[aid]["folder_key"] = fk
+                    except Exception:
+                        pass
+                continue
+
+            # Regla de conservación
+            default_title = self._default_title_from_folder_key(fk)
+            custom = [aid for aid in ids if albums[aid]
+                      ["title"] != default_title]
+            keep = min(custom) if custom else min(ids)
+
+            # Fusionar el resto
+            for dup in ids:
+                if dup == keep:
+                    continue
+                # mover vínculos (evita duplicar por PK)
+                cur.execute("""
+                        INSERT OR IGNORE INTO album_media(album_id, media_id, position)
+                        SELECT ?, media_id, position FROM album_media WHERE album_id=?;
+                    """, (keep, dup))
+                # portada: adopta si keep no tiene y dup sí
+                if albums[keep]["cover"] is None and albums[dup]["cover"] is not None:
+                    cur.execute(
+                        "UPDATE albums SET cover_path=? WHERE id=?;", (albums[dup]["cover"], keep))
+                    albums[keep]["cover"] = albums[dup]["cover"]
+                # borrar vínculos y el duplicado
+                cur.execute(
+                    "DELETE FROM album_media WHERE album_id=?;", (dup,))
+                cur.execute("DELETE FROM albums WHERE id=?;", (dup,))
+                albums.pop(dup, None)
+
+            # asegurar folder_key guardado = canónico
+            if albums[keep]["folder_key"] != fk:
+                try:
+                    cur.execute(
+                        "UPDATE albums SET folder_key=? WHERE id=?;", (fk, keep))
+                    albums[keep]["folder_key"] = fk
+                except Exception:
+                    pass
+
+        # 4) Eliminar álbumes VACÍOS
+        cur.execute("""
+                DELETE FROM albums
+                WHERE id IN (
+                    SELECT a.id
+                    FROM albums a
+                    LEFT JOIN album_media am ON am.album_id = a.id
+                    WHERE am.album_id IS NULL
+                );
+            """)
+
+        # 5) Reintentar índice único
+        try:
+            cur.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_albums_folder_key ON albums(folder_key) WHERE folder_key IS NOT NULL;"
+            )
+        except Exception:
+            try:
+                cur.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_albums_folder_key ON albums(folder_key);"
+                )
+            except Exception:
+                pass
+
         self.conn.commit()
+
+    # -------------------- Debug opcional -------------------- #
+    def debug_albums_snapshot(self) -> list[tuple]:
+        cur = self.conn.cursor()
+        cur.execute("""
+                SELECT a.id, a.title, a.folder_key,
+                       (SELECT COUNT(*) FROM album_media am WHERE am.album_id = a.id) AS items
+                FROM albums a
+                ORDER BY COALESCE(a.folder_key, ''), a.id;
+            """)
+        return cur.fetchall()
