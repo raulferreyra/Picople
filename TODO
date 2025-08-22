@@ -1,0 +1,112 @@
+# Hitos
+
+## Completados
+
+1. Bootstrap del proyecto
+
+    - Estructura modular (app/, controllers/, infrastructure/, core/, views/, assets/), venv, dependencias.
+    - Carga de fuentes (Orgon) y favicon.
+
+2. UI base + theming
+
+    - Ventana principal, sidebar, toolbar unificada, modo claro/oscuro persistente (QSettings).
+    - QSS oscuro/claro aplicado a títulos, labels, botones, progressbars.
+
+3. Carpetas
+
+    - Vista “Carpetas” en grilla (scroll), agregar/quitar/abrir, selección múltiple.
+    - Estilos visuales consistentes con el tema.
+
+4. Pulido UX
+
+    - Barra de estado legible en ambos temas.
+    - Controles de búsqueda/recarga estilizados por tema.
+
+5. Almacenamiento e indexación
+
+    - DB cifrada (SQLCipher pysqlcipher3), backup cifrado.
+    - Indexer en hilo (QThread), miniaturas: imágenes (Pillow) y videos (FFmpeg con imageio-ffmpeg), logs detallados.
+    - Esquema media(path, kind, mtime, size, thumb_path) + folders.
+
+6. Colección
+
+    - Grilla de miniaturas con scroll infinito, filtros (Todo/Fotos/Videos) y búsqueda por texto.
+    - Delegate propio con elipsis y mantener aspecto; icono de “play” en videos.
+
+7. Preferencias
+
+    - “Preferencias” con detección de hardware y “configuración sugerida”.
+    - Ajustes runtime (tile size, batch, thumbs de video, etc.).
+
+8. Visor embebido (imágenes & video)
+
+    - ImageView (fit/100%/zoom/rotate, wheel & drag) y VideoView (play/pause, barra de progreso, volumen, mute).
+    - Atajos de teclado (← → Espacio, Ctrl+0/1/±, R).
+    - Mostrar/ocultar controles según tipo (imagen vs video).
+    - Miniaturas de video funcionando via FFmpeg empacado.
+
+9. Favoritos y Álbumes
+
+    - DB: favorite en media; tablas albums y album_media.
+    - Vista Favoritos (scroll, acciones de quitar/añadir a álbum).
+    - Vista Álbumes (crear/renombrar/eliminar, portada, detalle con reorden).
+    - Modo selección en Colección y menús contextuales.
+    - Sincronización de estado con el visor (♥).
+
+## Pendientes
+
+10. Personas y mascotas (on-device)
+
+    - Pipeline local: detección (p.ej., MediaPipe/RetinaFace) + embeddings (ArcFace/FaceNet) + index (FAISS/Annoy).
+    - Agrupación/merge/split, nombrar (“Nombre "apodo" Apellido”), “eliminar etiqueta” para realimentar.
+    - UI de gestión de clusters y correcciones.
+
+11. Cosas y Lugares
+
+    - Clasificador de escenas/objetos (p.ej., CLIP/MobileNet/ViT on-device).
+    - Geolocalización EXIF, clustering por GPS/tiempo; categorías (estadio, playa, bosque, casa, colegio…).
+    - Facetas/etiquetas navegables.
+
+12. Búsqueda avanzada
+
+    - Facetas combinables (persona, cosa, lugar, fecha, carpeta, favorito, álbum).
+    - Parser de consultas (“persona: Juan cosa: playa antes:2020”).
+
+13. Calidad y deduplicación
+
+    - Detección de duplicados/ráfagas, puntuación de calidad, elección de mejor toma.
+    - Señalar archivos corruptos/rotados; herramientas de reparación básica.
+
+14. Exportación & mantenimiento
+
+    - Export/import de base (cifrada), reindexación selectiva, vacuum, “mover/renombrar seguro”.
+    - Sidecars (XMP/JSON) opcionales.
+
+15. Indexación en segundo plano
+
+    - Watcher (filesystem) para cambios en tiempo real.
+    - Planificador/cola con límites de CPU/IO y pausa automática en batería.
+
+16. Rendimiento
+
+    - Caché de miniaturas, prefetch y límites de memoria.
+    - Indices DB adicionales, opciones HW decode de video, multihilo controlado.
+
+17. Seguridad
+
+    - Cambio de clave/re-key sin perder datos, auto-lock por inactividad.
+    - Backups automáticos cifrados y comprobación de integridad.
+
+18. Empaquetado & distribución
+
+    - PyInstaller + recursos (Qt plugins, ffmpeg embebido, pillow-heif).
+    - Instalador (NSIS/Inno), rutas de datos, primera ejecución guiada.
+
+19. Polish final
+
+    - Icono dinámico opcional (favoritos/recientes) si Windows lo permite.
+    - Arrastrar/soltar, asociaciones de archivo, multi-idioma, accesibilidad.
+
+20. Extras “Moments” de video
+
+    - Keyframe “con caras” para portada de cada video, resumen de highlights.
