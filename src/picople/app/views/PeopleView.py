@@ -1,11 +1,11 @@
 from __future__ import annotations
 from typing import Dict, Any, Optional, List
 
-from PySide6.QtCore import Qt, QSize, QModelIndex
+from PySide6.QtCore import Qt, QSize, QModelIndex, QPoint
 from PySide6.QtGui import QIcon, QPixmap, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListView, QStackedWidget, QToolButton,
-    QLabel, QStyle
+    QLabel, QStyle, QMenu, QInputDialog
 )
 
 from picople.infrastructure.db import Database
@@ -22,6 +22,7 @@ class PeopleView(SectionView):
     Personas y mascotas:
       • Lista: clusters (DB si disponible, mock si no)
       • Detalle: PersonDetailView (Todos/Sugerencias) con botón “volver”
+      • Menú contextual en la lista: Renombrar / Mascota / Eliminar
     """
 
     def __init__(self, db: Optional[Database] = None):
@@ -69,6 +70,10 @@ class PeopleView(SectionView):
         self.list.setIconSize(QSize(TILE, TILE))
         self.list.setUniformItemSizes(False)
         self.list.doubleClicked.connect(self._open_person)
+
+        # menú contextual
+        self.list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._open_context_menu)
 
         self.model = QStandardItemModel(self.list)
         self.list.setModel(self.model)
@@ -190,18 +195,124 @@ class PeopleView(SectionView):
             )
         else:
             detail = PersonDetailView(
-                cluster=data,  # usa el mock tal como lo tenías
+                cluster=data,  # mock
                 parent=self._page_detail
             )
 
+        # Mantener el conteo del item de lista sincronizado
         detail.suggestionCountChanged.connect(
             lambda n, pid=self._current_person_id: self._update_person_label(
                 pid, n)
+        )
+        # Mantener el nombre sincronizado si se renombra desde el detalle
+        detail.titleChanged.connect(
+            lambda new_title, pid=self._current_person_id: self._apply_title_change(
+                pid, new_title)
         )
 
         self.detail_container.addWidget(detail)
         self.detail_container.setCurrentWidget(detail)
         self.stack.setCurrentIndex(1)
+
+    # ─────────────────────── Menú contextual ───────────────────────
+    def _open_context_menu(self, pos: QPoint) -> None:
+        idx = self.list.indexAt(pos)
+        if not idx.isValid():
+            return
+        data: Dict[str, Any] = idx.data(ROLE_DATA) or {}
+        pid = data.get("id")
+        if pid is None:
+            return
+
+        menu = QMenu(self)
+        act_rename = menu.addAction("Renombrar…")
+        if bool(data.get("is_pet")):
+            act_pet = menu.addAction("Marcar como persona")
+        else:
+            act_pet = menu.addAction("Marcar como mascota")
+        menu.addSeparator()
+        act_delete = menu.addAction("Eliminar")
+
+        global_pos = self.list.viewport().mapToGlobal(pos)
+        act = menu.exec(global_pos)
+        if not act:
+            return
+
+        if act == act_rename:
+            self._rename_person(idx)
+        elif act == act_pet:
+            self._toggle_pet(idx)
+        elif act == act_delete:
+            self._delete_person(idx)
+
+    def _apply_title_change(self, pid: str, new_title: str) -> None:
+        row = self._find_model_row_by_person_id(pid)
+        if row < 0:
+            return
+        it = self.model.item(row)
+        data: Dict[str, Any] = it.data(ROLE_DATA)
+        data["title"] = new_title
+        count = int(data.get("suggestions_count", 0))
+        it.setText(f"{new_title or 'Sin nombre'}  ({count})")
+        it.setData(data, ROLE_DATA)
+
+    def _rename_person(self, idx: QModelIndex) -> None:
+        it = self.model.itemFromIndex(idx)
+        data: Dict[str, Any] = it.data(ROLE_DATA) or {}
+        old = data.get("title") or "Sin nombre"
+
+        new, ok = QInputDialog.getText(
+            self, "Renombrar persona/mascota", "", text=old)
+        if not ok:
+            return
+        title = new.strip()
+        if not title or title == old:
+            return
+
+        if self.store:
+            try:
+                self.store.set_person_name(int(data["id"]), title)
+            except Exception:
+                pass
+        data["title"] = title
+        count = int(data.get("suggestions_count", 0))
+        it.setText(f"{title}  ({count})")
+        it.setData(data, ROLE_DATA)
+
+        # si está abierta en detalle, actualiza su header
+        if self._current_person_id and str(data["id"]) == str(self._current_person_id):
+            current = self.detail_container.currentWidget()
+            if isinstance(current, PersonDetailView):
+                current.set_title(title)
+
+    def _toggle_pet(self, idx: QModelIndex) -> None:
+        it = self.model.itemFromIndex(idx)
+        data: Dict[str, Any] = it.data(ROLE_DATA) or {}
+        new_flag = not bool(data.get("is_pet"))
+        if self.store:
+            try:
+                self.store.set_is_pet(int(data["id"]), new_flag)
+            except Exception:
+                pass
+        data["is_pet"] = new_flag
+        # visualmente no cambiamos el texto, solo el state interno
+        it.setData(data, ROLE_DATA)
+
+    def _delete_person(self, idx: QModelIndex) -> None:
+        it = self.model.itemFromIndex(idx)
+        data: Dict[str, Any] = it.data(ROLE_DATA) or {}
+        pid = data.get("id")
+        if pid is None:
+            return
+        if self.store:
+            try:
+                self.store.delete_person(int(pid))
+            except Exception:
+                pass
+        self.model.removeRow(idx.row())
+        # si estaba abierta en detalle, vuelve a la lista
+        if self._current_person_id and str(pid) == str(self._current_person_id):
+            self._go_back_to_list()
 
     # ────────────────────────── Mock data ─────────────────────────
     def _mock_clusters(self) -> list[Dict[str, Any]]:
@@ -211,6 +322,7 @@ class PeopleView(SectionView):
                 "id": i,
                 "title": f"Persona {i}",
                 "cover": "",
+                "is_pet": False,
                 "suggestions": [
                     {"id": f"{i}-s1", "thumb": ""},
                     {"id": f"{i}-s2", "thumb": ""},

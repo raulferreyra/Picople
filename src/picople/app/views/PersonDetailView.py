@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt, Signal, QSize, QRect
 from PySide6.QtGui import QPixmap, QPainter, QPainterPath
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QToolButton, QStackedWidget,
-    QScrollArea, QGridLayout, QFrame
+    QScrollArea, QGridLayout, QFrame, QInputDialog
 )
 
 from picople.infrastructure.people_store import PeopleStore
@@ -18,7 +18,7 @@ class PersonDetailView(QWidget):
     """
     Detalle de persona/mascota.
     Header local:
-      [Avatar circular 40x40]  Título
+      [Avatar circular 40x40]  Título  [✎ Renombrar]
       [Links: Todos | Sugerencias (N)]
 
     Páginas:
@@ -26,6 +26,7 @@ class PersonDetailView(QWidget):
       - page_sugs: grilla de SuggestionTile (DB o mock)
     """
     suggestionCountChanged = Signal(int)
+    titleChanged = Signal(str)
 
     def __init__(
         self,
@@ -66,8 +67,15 @@ class PersonDetailView(QWidget):
         self.lbl_title = QLabel(self.person_title, self)
         self.lbl_title.setObjectName("SectionTitle")
 
+        self.btn_rename = QToolButton(self)
+        self.btn_rename.setObjectName("ToolbarBtn")
+        self.btn_rename.setText("✎")
+        self.btn_rename.setToolTip("Renombrar")
+        self.btn_rename.clicked.connect(self._rename)
+
         top.addWidget(self.lbl_avatar)
         top.addWidget(self.lbl_title, 1)
+        top.addWidget(self.btn_rename)
 
         links = QHBoxLayout()
         links.setContentsMargins(0, 0, 0, 0)
@@ -172,6 +180,10 @@ class PersonDetailView(QWidget):
         self.btn_sugs.setText(f"Sugerencias ({n})")
         self.suggestionCountChanged.emit(n)
 
+    def set_title(self, new_title: str) -> None:
+        self.person_title = new_title or "Sin nombre"
+        self.lbl_title.setText(self.person_title)
+
     # Páginas
     def show_all(self):
         self.stack.setCurrentWidget(self.page_all)
@@ -182,6 +194,29 @@ class PersonDetailView(QWidget):
         self.stack.setCurrentWidget(self.page_sugs)
         self.btn_all.setEnabled(True)
         self.btn_sugs.setEnabled(False)
+
+    # ───────────── Renombrar ─────────────
+    def _rename(self):
+        old = self.person_title or "Sin nombre"
+        new, ok = QInputDialog.getText(
+            self, "Renombrar persona/mascota", "", text=old)
+        if not ok:
+            return
+        title = new.strip()
+        if not title or title == old:
+            return
+
+        # Persistir si hay store/person_id, o actualizar cluster mock
+        if self.store and self.person_id is not None:
+            try:
+                self.store.set_person_name(self.person_id, title)
+            except Exception:
+                pass
+        elif self.cluster is not None:
+            self.cluster["title"] = title
+
+        self.set_title(title)
+        self.titleChanged.emit(title)
 
     # ─────────────────── Carga “Todos” ───────────────────
     def _load_all(self):

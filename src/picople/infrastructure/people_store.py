@@ -21,6 +21,14 @@ class PeopleStore:
         self._conn: sqlite3.Connection = db.conn  # type: ignore
         self._ensure_schema()
 
+    def set_is_pet(self, person_id: int, is_pet: bool) -> None:
+        cur = self._conn.cursor()
+        cur.execute(
+            "UPDATE persons SET is_pet=?, updated_at=? WHERE id=?;",
+            (1 if is_pet else 0, self._now(), person_id)
+        )
+        self._conn.commit()
+
     # --------------------------------------------------------------------- #
     # Esquema
     # --------------------------------------------------------------------- #
