@@ -6,6 +6,7 @@ import sqlite3
 import time
 
 from picople.infrastructure.db import Database
+from picople.core.log import log
 
 
 class PeopleStore:
@@ -128,8 +129,12 @@ class PeopleStore:
         cur.execute(f"PRAGMA table_info({table});")
         cols = {r[1] for r in cur.fetchall()}
         if column not in cols:
+            log("PeopleStore: agregando columna",
+                f"{table}.{column}", "->", decl)
             cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl};")
             self._conn.commit()
+        else:
+            log("PeopleStore: columna ya existe", f"{table}.{column}")
 
     # --------------------------------------------------------------------- #
     # Helpers
@@ -398,6 +403,7 @@ class PeopleStore:
             LIMIT ?;
         """, (int(batch),))
         rows = cur.fetchall()
+        log("PeopleStore.get_unscanned_media: filas =", len(rows))
         return [{
             "media_id": int(r[0]),
             "path": r[1],
@@ -415,3 +421,15 @@ class PeopleStore:
                 last_ts=excluded.last_ts;
         """, (media_id, int(mtime), self._now()))
         self._conn.commit()
+        log("PeopleStore.mark_media_scanned: media_id =",
+            media_id, "mtime =", int(mtime))
+
+    # --------------------------------------------------------------------- #
+    # Escaneo: utilidades
+    # --------------------------------------------------------------------- #
+    def reset_scan_state(self) -> None:
+        """Borra el estado de face_scan_state para forzar reescaneo total."""
+        cur = self._conn.cursor()
+        cur.execute("DELETE FROM face_scan_state;")
+        self._conn.commit()
+        log("PeopleStore.reset_scan_state: face_scan_state vaciado")
