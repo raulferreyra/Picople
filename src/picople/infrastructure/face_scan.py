@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import List, Tuple, Optional
 from pathlib import Path
+import numpy as np
 
 from PySide6.QtCore import QObject, Signal
 
@@ -51,23 +52,35 @@ class FaceScanWorker(QObject):
         else:
             log("FaceScanWorker: OpenCV no disponible; detector desactivado")
 
-    def cancel(self):
-        self._cancel = True
-        log("FaceScanWorker: cancel solicitado")
+    def _cv_imread_unicode(self, path: str):
+        try:
+            data = np.fromfile(path, dtype=np.uint8)
+            if data.size == 0:
+                return None
+            img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+            return img
+        except Exception:
+            return None
 
     def _detect_faces(self, img_path: str) -> List[Tuple[int, int, int, int]]:
         if not self._detector:
             return []
         import cv2  # type: ignore
-        img = cv2.imread(img_path)
+
+        img = self._cv_imread_unicode(img_path)
         if img is None:
             log("FaceScanWorker: no se pudo leer imagen:", img_path)
             return []
+
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         faces = self._detector.detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=5, minSize=(32, 32)
+            gray, scaleFactor=1.08, minNeighbors=5, minSize=(32, 32)
         )
         return [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in faces]
+
+    def cancel(self):
+        self._cancel = True
+        log("FaceScanWorker: cancel solicitado")
 
     def run(self):
         # 1) abrir DB en el hilo del worker

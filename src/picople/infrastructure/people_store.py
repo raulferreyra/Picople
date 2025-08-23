@@ -148,6 +148,26 @@ class PeopleStore:
         row = cur.fetchone()
         return int(row[0]) if row else None
 
+    def get_face_info(self, face_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Devuelve info básica de una cara: bbox y rutas.
+        { 'x':..., 'y':..., 'w':..., 'h':..., 'thumb_path':..., 'path':... }
+        """
+        cur = self._conn.cursor()
+        cur.execute("""
+            SELECT f.x, f.y, f.w, f.h, m.thumb_path, m.path
+            FROM faces f
+            JOIN media m ON m.id = f.media_id
+            WHERE f.id = ?;
+        """, (face_id,))
+        r = cur.fetchone()
+        if not r:
+            return None
+        return {
+            "x": float(r[0]), "y": float(r[1]), "w": float(r[2]), "h": float(r[3]),
+            "thumb_path": r[4], "path": r[5]
+        }
+
     # --------------------------------------------------------------------- #
     # Personas (clusters)
     # --------------------------------------------------------------------- #

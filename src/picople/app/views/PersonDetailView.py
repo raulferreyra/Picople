@@ -2,7 +2,7 @@
 from __future__ import annotations
 from typing import Dict, Any, List, Optional
 
-from PySide6.QtCore import Qt, Signal, QSize, QRect
+from PySide6.QtCore import Qt, Signal, QRect
 from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QAction
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QToolButton, QStackedWidget,
@@ -10,6 +10,8 @@ from PySide6.QtWidgets import (
 )
 
 from picople.infrastructure.people_store import PeopleStore
+from picople.infrastructure.people_avatars import PeopleAvatarService
+from picople.core.paths import app_data_dir
 from .SuggestionTile import SuggestionTile
 
 TILE = 160
@@ -154,6 +156,83 @@ class PersonDetailView(QWidget):
         self._load_suggestions()
         self.show_all()
 
+    def _face_crop_path(self, face_id: int, size: int = 160) -> Optional[str]:
+        """
+        Genera (y cachea) un recorte cuadrado de la cara para mostrar en la tarjeta.
+        """
+        if not self.store:
+            return None
+        info = self.store.get_face_info(face_id)
+        if not info:
+            return None
+
+        src = info.get("thumb_path") or info.get("path")
+        if not src:
+            return None
+
+        out_dir = app_data_dir() / "cache" / "faces"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"{face_id}_{size}.jpg"
+
+        # Si ya existe, úsalo (simple; si quieres, puedes invalidar por mtime)
+        if out_path.exists():
+            return str(out_path)
+
+        bbox = (info["x"], info["y"], info["w"], info["h"])
+        ok = PeopleAvatarService.crop_face_square(
+            src_path=src,
+            bbox_xywh=bbox,
+            out_path=str(out_path),
+            out_size=size,
+            pad_ratio=0.3,  # un poco más de margen para que “respire”
+        )
+        return ok
+
+    def _load_suggestions(self):
+        # ... (limpieza de grid igual que ahora)
+        self._sugs = []
+
+        if self.store and self.person_id is not None:
+            rows = self.store.list_person_suggestions(
+                self.person_id, limit=400, offset=0)
+            # Construimos las tarjetas con el CROP de cada cara
+            for r in rows:
+                fid = int(r["face_id"])
+                crop = self._face_crop_path(fid, size=160) or (r["thumb"])
+                self._sugs.append({"id": str(fid), "thumb": crop})
+        elif self.cluster:
+            self._sugs = list(self.cluster.get("suggestions", []))
+
+        cols = max(1, self._calc_cols(TILE + 16))  # ← usa helper de columnas
+        for i, sug in enumerate(self._sugs):
+            tile = SuggestionTile(sug_id=str(
+                sug["id"]), thumb_path=sug.get("thumb"))
+            # ... señales iguales ...
+            r = i // cols
+            c = i % cols
+            self.grid.addWidget(tile, r, c)
+
+        self._update_sug_link_text()
+
+    def _calc_cols(self, cell_w: int) -> int:
+        # helper para no recomputar toda la grilla en cada resize si no cambia columnas
+        return max(1, max(1, self.width()) // max(1, cell_w))
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        # Solo reconstruye si cambió el número de columnas
+        new_cols_all = self._calc_cols(TILE + 12)
+        new_cols_sug = self._calc_cols(TILE + 16)
+
+        if getattr(self, "_last_cols_all", None) != new_cols_all:
+            self._last_cols_all = new_cols_all
+            self._load_all()
+
+        if self.stack.currentWidget() is self.page_sugs:
+            if getattr(self, "_last_cols_sug", None) != new_cols_sug:
+                self._last_cols_sug = new_cols_sug
+                self._load_suggestions()
+
     # Estado páginas
     def is_on_suggestions(self) -> bool:
         return self.stack.currentWidget() is self.page_sugs
@@ -279,44 +358,6 @@ class PersonDetailView(QWidget):
             r = i // cols
             c = i % cols
             self._grid_all.addWidget(lab, r, c)
-
-    # Carga “Sugerencias”
-    def _load_suggestions(self):
-        # limpiar grid y lista
-        while self.grid.count():
-            item = self.grid.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
-        self._sugs = []
-
-        if self.store and self.person_id is not None:
-            rows = self.store.list_person_suggestions(
-                self.person_id, limit=400, offset=0)
-            self._sugs = [
-                {"id": str(r["face_id"]), "thumb": r["thumb"]} for r in rows]
-        elif self.cluster:
-            self._sugs = list(self.cluster.get("suggestions", []))
-
-        cols = max(1, self.width() // (TILE + 16))
-        for i, sug in enumerate(self._sugs):
-            tile = SuggestionTile(sug_id=str(
-                sug["id"]), thumb_path=sug.get("thumb"))
-            tile.acceptClicked.connect(self._on_accept)
-            tile.rejectClicked.connect(self._on_reject)
-            tile.discardClicked.connect(self._on_discard)  # ← ocultar rostro
-            tile.coverClicked.connect(self._on_set_cover)
-            r = i // cols
-            c = i % cols
-            self.grid.addWidget(tile, r, c)
-
-        self._update_sug_link_text()
-
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        self._load_all()
-        if self.stack.currentWidget() is self.page_sugs:
-            self._load_suggestions()
 
     # Acciones Sugerencia
     def _remove_sug_by_id(self, sug_id: str):
