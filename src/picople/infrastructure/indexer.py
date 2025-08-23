@@ -99,14 +99,12 @@ class IndexerWorker(QObject):
                         counts["images"] += 1
                         out = image_thumb(p, thumbs, self.thumb_size)
                         thumb_file = str(out) if out and out.exists() else None
-                        log("Indexer: generando thumb de imagen ->", str(p))
                         if thumb_file:
                             counts["thumbs_ok"] += 1
                         else:
                             counts["thumbs_fail"] += 1
                     else:
                         counts["videos"] += 1
-                        log("Indexer: generando thumb de video ->", str(p))
                         if self.allow_video_thumbs:
                             out = video_thumb(p, thumbs, self.thumb_size)
                             thumb_file = str(

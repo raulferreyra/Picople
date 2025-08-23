@@ -43,7 +43,6 @@ def _resolve_ffmpeg_path() -> Optional[str]:
         try:
             exe = get_ffmpeg_exe()
             if exe and Path(exe).exists():
-                log(f"thumbs: ffmpeg via imageio-ffmpeg -> {exe}")
                 return exe
         except Exception as e:
             log(f"thumbs: imageio-ffmpeg get_ffmpeg_exe error: {e}")
@@ -53,13 +52,11 @@ def _resolve_ffmpeg_path() -> Optional[str]:
     candidate = proj_root / "assets" / "ffmpeg" / \
         ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
     if candidate.exists():
-        log(f"thumbs: ffmpeg via assets -> {candidate}")
         return str(candidate)
 
     # 3) PATH
     found = shutil.which("ffmpeg")
     if found:
-        log(f"thumbs: ffmpeg via PATH -> {found}")
         return found
 
     return None
@@ -90,7 +87,6 @@ def image_thumb(src: Path, out_dir: Path, size: int = 320) -> Optional[Path]:
 def video_thumb(src: Path, out_dir: Path, size: int = 320) -> Optional[Path]:
     ffmpeg = _resolve_ffmpeg_path()
     if not ffmpeg:
-        log("thumbs.video: ffmpeg no encontrado (imageio-ffmpeg/assets/PATH)")
         return None
 
     try:
@@ -126,17 +122,14 @@ def video_thumb(src: Path, out_dir: Path, size: int = 320) -> Optional[Path]:
         ]
 
         for name, cmd in attempts:
-            log(f"thumbs.video: try {name} -> {src}")
             try:
                 subprocess.run(
                     cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 if out.exists() and out.stat().st_size > 0:
-                    log(f"thumbs.video: success {name} -> {out}")
                     return out
             except Exception as e:
                 log(f"thumbs.video: fail {name} -> {e}")
 
-        log(f"thumbs.video: all attempts failed -> {src}")
         return None
 
     except Exception as e:

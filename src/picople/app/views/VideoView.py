@@ -44,10 +44,8 @@ class VideoView(QWidget):
     def _on_status(self, st):
         self._ready = st in (QMediaPlayer.LoadedMedia,
                              QMediaPlayer.BufferedMedia)
-        log("VideoView.status:", getattr(st, "name", st), "ready:", self._ready)
         if self._ready and self._pending_play:
             self._pending_play = False
-            log("VideoView: autoplay tras ready")
             try:
                 self.player.play()
             except Exception as e:
@@ -56,10 +54,8 @@ class VideoView(QWidget):
     def _on_state(self, st):
         is_playing = (st == QMediaPlayer.PlayingState)
         self.playingChanged.emit(is_playing)
-        log("VideoView.playbackState:", getattr(st, "name", st))
 
     def _on_error(self, err, msg):
-        log("VideoView.ERROR:", getattr(err, "name", err), "|", msg)
         try:
             self.player.stop()
             self.player.setSource(QUrl())
@@ -78,7 +74,6 @@ class VideoView(QWidget):
             self._ready = False
 
             url = QUrl.fromLocalFile(path)
-            log("VideoView.load:", path)
             self.player.setSource(url)
             return True
         except Exception as e:
@@ -96,7 +91,6 @@ class VideoView(QWidget):
         else:
             if not self._ready:
                 self._pending_play = True
-                log("VideoView: play pending (no ready)")
             try:
                 self.player.play()
             except Exception as e:
