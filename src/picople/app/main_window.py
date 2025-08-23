@@ -20,6 +20,7 @@ from picople.core.paths import app_data_dir
 from picople.app.controllers import MediaItem
 from picople.app.views.ViewerOverlay import ViewerOverlay
 from picople.app.views.MediaViewerPanel import MediaViewerPanel
+from picople.infrastructure.face_scan import FaceScanWorker
 
 
 SECTIONS: Tuple[Tuple[str, str], ...] = (
@@ -49,6 +50,9 @@ class MainWindow(QMainWindow):
         self._indexer: IndexerWorker | None = None
         self._viewer_page: QWidget | None = None
         self._viewer_prev_widget: QWidget | None = None
+        self._face_thread = None
+        self._face_worker = None
+        self._face_timer = None
 
         # Abrir (o crear) DB cifrada antes de construir vistas
         self._open_database_or_prompt()
@@ -56,6 +60,12 @@ class MainWindow(QMainWindow):
         # UI
         self._build_ui()
         self._apply_theme()
+
+        self._face_timer = QTimer(self)
+        # cada 30s intenta un pequeño lote
+        self._face_timer.setInterval(30_000)
+        self._face_timer.timeout.connect(self._kick_face_scan_idle)
+        self._face_timer.start()
 
         # restaurar
         geom = self.settings.value("ui/geometry")
@@ -280,6 +290,49 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(1200, lambda: self.status_label.setText("Listo"))
 
     # ---------- helpers ----------
+    def _kick_face_scan_idle(self):
+        if not (self._db and self._db.is_open):
+            return
+        if self._face_thread is not None:
+            # ya hay un escaneo en curso
+            return
+
+        self._face_thread = QThread(self)
+        self._face_worker = FaceScanWorker(self._db)
+        self._face_worker.moveToThread(self._face_thread)
+
+        self._face_thread.started.connect(self._face_worker.run)
+        self._face_worker.started.connect(
+            lambda n: self.status_label.setText(f"Analizando caras… 0/{n}"))
+        self._face_worker.progress.connect(lambda i, t, p: self.status_label.setText(
+            f"Analizando caras… {i}/{t} • {Path(p).name}"))
+        self._face_worker.info.connect(
+            lambda msg: self.status_label.setText(msg))
+        self._face_worker.error.connect(lambda path, err: self.status_label.setText(
+            f"Caras: error en {Path(path).name}: {err[:60]}"))
+
+        def _done(summary: dict):
+            self.status_label.setText(
+                f"Caras: lote listo • medias {summary.get('scanned', 0)} • caras {summary.get('faces', 0)}")
+            # refresca PeopleView si está cargada
+            page = self._pages.get("people")
+            if hasattr(page, "refresh_from_db"):
+                try:
+                    page.refresh_from_db()
+                except Exception:
+                    pass
+
+        self._face_worker.finished.connect(_done)
+        self._face_worker.finished.connect(self._face_thread.quit)
+        self._face_thread.finished.connect(self._face_worker.deleteLater)
+        self._face_thread.finished.connect(
+            lambda: setattr(self, "_face_worker", None))
+        self._face_thread.finished.connect(self._face_thread.deleteLater)
+        self._face_thread.finished.connect(
+            lambda: setattr(self, "_face_thread", None))
+
+        self._face_thread.start()
+
     def _apply_theme(self) -> None:
         self.setStyleSheet(QSS_DARK if self.dark_mode else QSS_LIGHT)
 
@@ -360,6 +413,7 @@ class MainWindow(QMainWindow):
             f"Indexación lista: {total} archivos  •  {imgs} fotos / {vids} videos  •  miniaturas OK {ok}, fallos {fail}"
         )
         QTimer.singleShot(2000, lambda: self.status_label.setText("Listo"))
+        self._kick_face_scan_idle()
 
     # visor embebido (desde señales de CollectionView)
     def _open_viewer_embedded(self, items: list, start_index: int):

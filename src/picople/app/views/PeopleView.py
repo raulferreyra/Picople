@@ -348,3 +348,7 @@ class PeopleView(SectionView):
                 "suggestions_count": 3,
             })
         return out
+
+    def refresh_from_db(self) -> None:
+        """Permite a MainWindow refrescar la lista tras un escaneo."""
+        self._reload_list()

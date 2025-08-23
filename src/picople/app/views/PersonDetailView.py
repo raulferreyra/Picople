@@ -1,3 +1,4 @@
+# app/views/PersonDetailView.py
 from __future__ import annotations
 from typing import Dict, Any, List, Optional
 
@@ -229,7 +230,8 @@ class PersonDetailView(QWidget):
         if not (self.store and self.person_id is not None):
             return
         try:
-            path = self.store.generate_cover_for_person(self.person_id)
+            path = self.store.generate_cover_for_person(
+                self.person_id)  # asumido existente en tu store
             if path:
                 self._set_avatar(path)
                 self.coverChanged.emit()
@@ -302,7 +304,7 @@ class PersonDetailView(QWidget):
                 sug["id"]), thumb_path=sug.get("thumb"))
             tile.acceptClicked.connect(self._on_accept)
             tile.rejectClicked.connect(self._on_reject)
-            tile.discardClicked.connect(self._on_discard)
+            tile.discardClicked.connect(self._on_discard)  # ← ocultar rostro
             tile.coverClicked.connect(self._on_set_cover)
             r = i // cols
             c = i % cols
@@ -338,9 +340,14 @@ class PersonDetailView(QWidget):
         self._remove_sug_by_id(sug_id)
 
     def _on_discard(self, sug_id: str):
+        """
+        Ocultar rostro (no borrar):
+        - Marca la cara como escondida (faces.is_hidden=1).
+        - La cara deja de aparecer en list_person_suggestions (ya filtramos is_hidden=0).
+        """
         if self.store:
             try:
-                self.store.delete_face(int(sug_id))
+                self.store.hide_face(int(sug_id), True)
             except Exception:
                 pass
         self._remove_sug_by_id(sug_id)
@@ -350,7 +357,7 @@ class PersonDetailView(QWidget):
             return
         try:
             path = self.store.set_person_cover_from_face(
-                self.person_id, int(sug_id))
+                self.person_id, int(sug_id))  # asumido existente en tu store
             if path:
                 self._set_avatar(path)
                 self.coverChanged.emit()
