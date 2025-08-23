@@ -1,3 +1,4 @@
+# app/main_window.py
 from __future__ import annotations
 from typing import Tuple
 

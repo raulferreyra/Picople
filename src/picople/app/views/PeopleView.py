@@ -16,7 +16,6 @@ from .PersonDetailView import PersonDetailView
 
 ROLE_DATA = Qt.UserRole + 100
 TILE = 160
-USE_MOCK_WHEN_EMPTY = True
 
 
 class PeopleView(SectionView):
@@ -39,7 +38,9 @@ class PeopleView(SectionView):
         try:
             if self.db and self.db.is_open:
                 self.store = PeopleStore(self.db)
-        except Exception:
+        except Exception as e:
+            # Log explícito para no caer en placeholders “mágicamente”
+            print(f"[PeopleView] PeopleStore init failed: {e}")
             self.store = None
 
         self.stack = QStackedWidget(self)
@@ -56,6 +57,23 @@ class PeopleView(SectionView):
         self.stack.addWidget(self._page_detail)  # idx 1
         self.content_layout.addWidget(self.stack, 1)
 
+        self._reload_list()
+
+    # ───────────────────────── API pública ─────────────────────────
+    def refresh_from_db(self) -> None:
+        """
+        Reintenta crear el store (por si falló al inicio) y recarga la lista desde DB.
+        Llamado por MainWindow al terminar FaceScanWorker.
+        """
+        if not (self.db and self.db.is_open):
+            return
+        if self.store is None:
+            try:
+                self.store = PeopleStore(self.db)
+                print("[PeopleView] PeopleStore reattached after scan.")
+            except Exception as e:
+                print(f"[PeopleView] PeopleStore reattach failed: {e}")
+                self.store = None
         self._reload_list()
 
     # ───────────────────────── List page ─────────────────────────
@@ -83,27 +101,23 @@ class PeopleView(SectionView):
         root.addWidget(self.list, 1)
 
     def _reload_list(self) -> None:
-        """Carga desde DB si hay store; si no, usa mock.
-        Si la DB está vacía y USE_MOCK_WHEN_EMPTY=True, cae a mock también.
-        """
+        """Carga desde DB si hay store; si no, usa mock."""
         self.model.clear()
 
-        persons: List[Dict[str, Any]] = []
-        if self.store:
+        # Reintento perezoso: si no hay store pero la DB está abierta, reintenta
+        if self.store is None and self.db and self.db.is_open:
             try:
-                persons = self.store.list_persons_with_suggestion_counts()
-            except Exception:
-                persons = []
+                self.store = PeopleStore(self.db)
+                print("[PeopleView] PeopleStore attached on reload.")
+            except Exception as e:
+                print(f"[PeopleView] PeopleStore attach failed on reload: {e}")
+                self.store = None
 
-        if not persons:
-            if self.store and not USE_MOCK_WHEN_EMPTY:
-                # --- Empty state sin mocks (si prefieres) ---
-                # it = QStandardItem(QIcon(), "Aún no hay personas. Ejecuta la indexación para detectarlas.")
-                # it.setEditable(False)
-                # self.model.appendRow(it)
-                pass
-            else:
-                persons = self._clusters_mock
+        persons: List[Dict[str, Any]]
+        if self.store:
+            persons = self.store.list_persons_with_suggestion_counts()
+        else:
+            persons = self._clusters_mock
 
         for p in persons:
             pm = QPixmap(p.get("cover") or "")
@@ -111,11 +125,9 @@ class PeopleView(SectionView):
                 pm = QPixmap(TILE, TILE)
                 pm.fill(Qt.gray)
             icon = QIcon(pm)
-
             title = p.get("title") or "Sin nombre"
-            sugs = int(p.get("suggestions_count") or 0)
+            sugs = int(p.get("suggestions_count", 0))
             text = f"{title}  ({sugs})"
-
             it = QStandardItem(icon, text)
             it.setEditable(False)
             it.setData(p, ROLE_DATA)
@@ -142,6 +154,32 @@ class PeopleView(SectionView):
         data["suggestions_count"] = int(new_sug_count)
         title = data.get("title") or "Sin nombre"
         it.setText(f"{title}  ({new_sug_count})")
+        it.setData(data, ROLE_DATA)
+
+    def _refresh_person_icon(self, pid: str) -> None:
+        """Recarga el ícono (portada) del item tras cambiar cover en el detalle."""
+        if self.store is None:
+            return
+        row = self._find_model_row_by_person_id(pid)
+        if row < 0:
+            return
+        it = self.model.item(row)
+        data: Dict[str, Any] = it.data(ROLE_DATA) or {}
+        # Vuelve a consultar a la store (para obtener cover_path actualizado)
+        try:
+            persons = self.store.list_persons_with_suggestion_counts()
+            match = next((p for p in persons if str(
+                p.get("id")) == str(pid)), None)
+        except Exception:
+            match = None
+        cover = (match or {}).get("cover") or data.get("cover") or ""
+        pm = QPixmap(cover) if cover else QPixmap(TILE, TILE)
+        if pm.isNull():
+            pm = QPixmap(TILE, TILE)
+            pm.fill(Qt.gray)
+        it.setIcon(QIcon(pm))
+        # Actualiza el dict guardado
+        data["cover"] = cover
         it.setData(data, ROLE_DATA)
 
     # ──────────────────────── Detail page ────────────────────────
@@ -216,15 +254,18 @@ class PeopleView(SectionView):
                 parent=self._page_detail
             )
 
-        # Mantener el conteo del item de lista sincronizado
+        # Mantener el conteo y el título sincronizados
         detail.suggestionCountChanged.connect(
             lambda n, pid=self._current_person_id: self._update_person_label(
                 pid, n)
         )
-        # Mantener el nombre sincronizado si se renombra desde el detalle
         detail.titleChanged.connect(
             lambda new_title, pid=self._current_person_id: self._apply_title_change(
                 pid, new_title)
+        )
+        # Refrescar ícono/portada cuando se cambie desde el detalle
+        detail.coverChanged.connect(
+            lambda pid=self._current_person_id: self._refresh_person_icon(pid)
         )
 
         self.detail_container.addWidget(detail)
@@ -308,11 +349,11 @@ class PeopleView(SectionView):
         new_flag = not bool(data.get("is_pet"))
         if self.store:
             try:
+                # Asegúrate de tener este método en PeopleStore
                 self.store.set_is_pet(int(data["id"]), new_flag)
             except Exception:
                 pass
         data["is_pet"] = new_flag
-        # visualmente no cambiamos el texto, solo el state interno
         it.setData(data, ROLE_DATA)
 
     def _delete_person(self, idx: QModelIndex) -> None:
@@ -327,7 +368,6 @@ class PeopleView(SectionView):
             except Exception:
                 pass
         self.model.removeRow(idx.row())
-        # si estaba abierta en detalle, vuelve a la lista
         if self._current_person_id and str(pid) == str(self._current_person_id):
             self._go_back_to_list()
 
@@ -348,7 +388,3 @@ class PeopleView(SectionView):
                 "suggestions_count": 3,
             })
         return out
-
-    def refresh_from_db(self) -> None:
-        """Permite a MainWindow refrescar la lista tras un escaneo."""
-        self._reload_list()
