@@ -1,6 +1,5 @@
-# src/picople/infrastructure/people_store.py
 from __future__ import annotations
-from typing import Optional, Iterable, Tuple, List, Dict, Any
+from typing import Optional, Tuple, List, Dict, Any
 
 import sqlite3
 import time
@@ -109,6 +108,18 @@ class PeopleStore:
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_face_sug_state  ON face_suggestions(state);")
 
+        # Estado de escaneo de caras por media (para escaneo incremental)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS face_scan_state (
+                media_id   INTEGER PRIMARY KEY,
+                last_mtime INTEGER NOT NULL,
+                last_ts    INTEGER NOT NULL,
+                FOREIGN KEY(media_id) REFERENCES media(id) ON DELETE CASCADE
+            );
+        """)
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_face_scan_ts ON face_scan_state(last_ts);")
+
         self._conn.commit()
 
     def _add_column_if_missing(self, table: str, column: str, decl: str) -> None:
@@ -211,12 +222,16 @@ class PeopleStore:
         mid = self._get_media_id_by_path(media_path)
         if mid is None:
             return None
+        return self.add_face_by_media_id(mid, bbox_xywh, embedding=embedding, quality=quality)
+
+    def add_face_by_media_id(self, media_id: int, bbox_xywh: Tuple[float, float, float, float],
+                             *, embedding: Optional[bytes] = None, quality: Optional[float] = None) -> int:
         x, y, w, h = bbox_xywh
         cur = self._conn.cursor()
         cur.execute("""
-            INSERT INTO faces(media_id, x, y, w, h, embedding, quality, ts)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?);
-        """, (mid, x, y, w, h, embedding, quality, self._now()))
+            INSERT INTO faces(media_id, x, y, w, h, embedding, quality, ts, is_hidden)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0);
+        """, (media_id, x, y, w, h, embedding, quality, self._now()))
         self._conn.commit()
         return int(cur.lastrowid)
 
@@ -363,3 +378,39 @@ class PeopleStore:
         cover = row[0] or row[1]
         self.set_person_cover(person_id, cover)
         return cover
+
+    # --------------------------------------------------------------------- #
+    # Escaneo incremental: selección y marcado
+    # --------------------------------------------------------------------- #
+    def get_unscanned_media(self, *, batch: int = 48) -> List[Dict[str, Any]]:
+        """
+        Devuelve un lote de medias cuyo mtime es más nuevo que el último escaneo
+        (o nunca escaneadas).
+        """
+        cur = self._conn.cursor()
+        cur.execute("""
+            SELECT m.id AS media_id, m.path, m.mtime, m.thumb_path
+            FROM media m
+            LEFT JOIN face_scan_state s ON s.media_id = m.id
+            WHERE s.media_id IS NULL OR s.last_mtime < m.mtime
+            ORDER BY COALESCE(s.last_ts, 0) ASC, m.mtime DESC
+            LIMIT ?;
+        """, (int(batch),))
+        rows = cur.fetchall()
+        return [{
+            "media_id": int(r[0]),
+            "path": r[1],
+            "mtime": int(r[2]),
+            "thumb_path": r[3],
+        } for r in rows]
+
+    def mark_media_scanned(self, media_id: int, mtime: int) -> None:
+        cur = self._conn.cursor()
+        cur.execute("""
+            INSERT INTO face_scan_state(media_id, last_mtime, last_ts)
+            VALUES(?, ?, ?)
+            ON CONFLICT(media_id) DO UPDATE SET
+                last_mtime=excluded.last_mtime,
+                last_ts=excluded.last_ts;
+        """, (media_id, int(mtime), self._now()))
+        self._conn.commit()

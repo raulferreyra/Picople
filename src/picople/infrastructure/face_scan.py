@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 
 from PySide6.QtCore import QObject, Signal
 
@@ -16,10 +16,10 @@ except Exception:
 
 class FaceScanWorker(QObject):
     started = Signal(int)                # total previstos (aprox de lote)
-    progress = Signal(int, int, str)      # i, total, path
+    progress = Signal(int, int, str)     # i, total, path
     info = Signal(str)
-    error = Signal(str, str)           # path, err
-    finished = Signal(dict)               # summary
+    error = Signal(str, str)             # path, err
+    finished = Signal(dict)              # summary
 
     def __init__(self, db: Database):
         super().__init__()
@@ -61,7 +61,7 @@ class FaceScanWorker(QObject):
         """
         Escaneo incremental por lotes pequeños.
         - Toma medias no escaneadas (o con mtime más nuevo).
-        - Detecta caras; inserta en faces; (sugerencias/embeddings quedarán para el paso 2 del hito).
+        - Detecta caras; inserta en faces; crea persona placeholder y sugerencia.
         - Marca media como escaneada.
         """
         try:
@@ -80,13 +80,21 @@ class FaceScanWorker(QObject):
                 break
             path = item["path"]
             mid = item["media_id"]
+            thumb = item.get("thumb_path") or path
             try:
                 boxes = self._detect_faces(path)
+                # crea una persona placeholder por cada cara detectada
                 for (x, y, w, h) in boxes:
-                    # calidad simple por tamaño del bbox (placeholder)
+                    # calidad simple (área del bbox como placeholder)
                     q = float(w * h)
-                    self.store.add_face(mid, (x, y, w, h),
-                                        embedding=None, quality=q)
+                    face_id = self.store.add_face(path, (x, y, w, h),
+                                                  embedding=None, quality=q)
+                    if face_id is None:
+                        continue
+                    # persona sin nombre + sugerencia hacia esa persona
+                    pid = self.store.create_person(
+                        display_name=None, is_pet=False, cover_path=thumb)
+                    self.store.add_suggestion(face_id, pid, score=q)
                 faces_total += len(boxes)
                 # marcar escaneado
                 self.store.mark_media_scanned(mid, item["mtime"])
