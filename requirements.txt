@@ -7,9 +7,11 @@ iniconfig==2.1.0
 loguru==0.7.3
 mypy==1.17.1
 mypy_extensions==1.1.0
+numpy==2.2.6
+opencv-python==4.12.0.88
 packaging==25.0
 pathspec==0.12.1
-picople==0.0.1
+-e git+https://github.com/raulferreyra/Picople.git@7d8253ce57f3bebb664b7f55fad86b618d3335a5#egg=picople
 pillow==11.3.0
 pillow_heif==1.1.0
 platformdirs==4.3.8
