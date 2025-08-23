@@ -1,15 +1,15 @@
 # app/main_window.py
 from __future__ import annotations
 from typing import Tuple
-
 from pathlib import Path
+from inspect import signature
 
 from PySide6.QtCore import Qt, QTimer, QSize, QSettings, QThread
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFrame, QPushButton, QLabel,
     QLineEdit, QToolBar, QStatusBar, QProgressBar, QMessageBox, QStyle,
-    QToolButton, QStackedWidget, QSizePolicy, QFileDialog, QInputDialog
+    QToolButton, QStackedWidget, QSizePolicy, QInputDialog
 )
 
 from picople.core.theme import QSS_DARK, QSS_LIGHT
@@ -22,6 +22,7 @@ from picople.app.controllers import MediaItem
 from picople.app.views.ViewerOverlay import ViewerOverlay
 from picople.app.views.MediaViewerPanel import MediaViewerPanel
 from picople.infrastructure.face_scan import FaceScanWorker
+from picople.core.log import log
 
 
 SECTIONS: Tuple[Tuple[str, str], ...] = (
@@ -298,8 +299,20 @@ class MainWindow(QMainWindow):
             # ya hay un escaneo en curso
             return
 
+        try:
+            from picople.infrastructure import face_scan as fs
+            log("MainWindow: FaceScanWorker desde:", getattr(fs, "__file__", "?"),
+                "sig:", str(signature(fs.FaceScanWorker)))
+        except Exception as e:
+            log("MainWindow: no pude inspeccionar FaceScanWorker:", e)
+
+        log("MainWindow: creando FaceScanWorker con",
+            str(self._db.db_path), "key?", bool(self._db_key))
+
         self._face_thread = QThread(self)
-        self._face_worker = FaceScanWorker(self._db)
+        # self._face_worker = FaceScanWorker(self._db)
+        self._face_worker = FaceScanWorker(
+            str(self._db.db_path), self._db_key or "")
         self._face_worker.moveToThread(self._face_thread)
 
         self._face_thread.started.connect(self._face_worker.run)

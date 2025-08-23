@@ -1,5 +1,6 @@
 from __future__ import annotations
-from typing import List, Tuple
+from typing import List, Tuple, Optional
+from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
@@ -22,10 +23,13 @@ class FaceScanWorker(QObject):
     error = Signal(str, str)             # path, err
     finished = Signal(dict)              # summary
 
-    def __init__(self, db: Database):
+    # 👇👈 OJO: solo DOS parámetros (db_path, db_key). Se eliminó el "db" inicial.
+    def __init__(self, db_path: str | Path, db_key: str):
         super().__init__()
-        self.db = db
-        self.store = PeopleStore(db)
+        self.db_path = str(db_path)
+        self.db_key = db_key
+        self.db: Optional[Database] = None
+        self.store: Optional[PeopleStore] = None
         self._cancel = False
 
         # Carga detector si hay OpenCV; si no, queda como no-op
@@ -44,7 +48,6 @@ class FaceScanWorker(QObject):
                     log("FaceScanWorker: cascade vacío (no cargado)")
             except Exception as e:
                 log("FaceScanWorker: error cargando cascade:", e)
-                self._detector = None
         else:
             log("FaceScanWorker: OpenCV no disponible; detector desactivado")
 
@@ -53,10 +56,6 @@ class FaceScanWorker(QObject):
         log("FaceScanWorker: cancel solicitado")
 
     def _detect_faces(self, img_path: str) -> List[Tuple[int, int, int, int]]:
-        """
-        Devuelve una lista de bboxes (x, y, w, h) en coordenadas de la imagen.
-        Si no hay detector disponible, retorna [] (no rompe).
-        """
         if not self._detector:
             return []
         import cv2  # type: ignore
@@ -71,16 +70,17 @@ class FaceScanWorker(QObject):
         return [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in faces]
 
     def run(self):
-        """
-        Escaneo incremental por lotes pequeños.
-        - Toma medias no escaneadas (o con mtime más nuevo).
-        - Detecta caras; inserta en faces; crea persona placeholder y sugerencia.
-        - Marca media como escaneada.
-        """
-        if not _CV2_OK or self._detector is None:
-            msg = "Caras: detector no disponible (OpenCV/cascade ausente)."
-            log("FaceScanWorker.run:", msg)
-            self.info.emit(msg)
+        # 1) abrir DB en el hilo del worker
+        try:
+            self.db = Database(Path(self.db_path))
+            self.db.open(self.db_key)
+            self.store = PeopleStore(self.db)
+            log("FaceScanWorker.run: DB abierta en worker")
+        except Exception as e:
+            log("FaceScanWorker.run: no se pudo abrir DB en worker:", e)
+            self.error.emit("", f"No se pudo abrir DB en worker: {e}")
+            self.finished.emit({"scanned": 0, "faces": 0})
+            return
 
         try:
             batch = self.store.get_unscanned_media(batch=48)
@@ -88,6 +88,7 @@ class FaceScanWorker(QObject):
             log("FaceScanWorker.run: error consultando lote:", e)
             self.error.emit("", f"Error consultando estado de escaneo: {e}")
             self.finished.emit({"scanned": 0, "faces": 0})
+            self._close_db()
             return
 
         total = len(batch)
@@ -98,10 +99,10 @@ class FaceScanWorker(QObject):
             log("FaceScanWorker.run:", msg)
             self.info.emit(msg)
             self.finished.emit({"scanned": 0, "faces": 0})
+            self._close_db()
             return
 
         faces_total = 0
-
         for i, item in enumerate(batch, start=1):
             if self._cancel:
                 log("FaceScanWorker.run: cancelado en iter", i)
@@ -116,7 +117,7 @@ class FaceScanWorker(QObject):
                 boxes = self._detect_faces(path)
                 log(f"FaceScanWorker.run: [{i}/{total}] caras detectadas =", len(boxes))
                 for (x, y, w, h) in boxes:
-                    q = float(w * h)  # calidad simple placeholder
+                    q = float(w * h)
                     face_id = self.store.add_face_by_media_id(
                         mid, (x, y, w, h), embedding=None, quality=q
                     )
@@ -128,7 +129,6 @@ class FaceScanWorker(QObject):
                         f"FaceScanWorker: face_id={face_id} -> person_id={pid} (score={q})")
 
                 faces_total += len(boxes)
-                # marcar escaneado SIEMPRE (aunque no haya caras)
                 self.store.mark_media_scanned(mid, item["mtime"])
                 self.progress.emit(i, total, path)
             except Exception as e:
@@ -138,3 +138,12 @@ class FaceScanWorker(QObject):
         summary = {"scanned": total, "faces": faces_total}
         log("FaceScanWorker.run: terminado. summary=", summary)
         self.finished.emit(summary)
+        self._close_db()
+
+    def _close_db(self):
+        try:
+            if self.db and getattr(self.db, "conn", None):
+                self.db.conn.close()
+                log("FaceScanWorker.run: DB cerrada en worker")
+        except Exception as e:
+            log("FaceScanWorker.run: error cerrando DB:", e)
