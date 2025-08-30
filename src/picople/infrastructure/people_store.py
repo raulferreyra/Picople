@@ -30,22 +30,17 @@ class PeopleStore:
     def _ensure_schema(self) -> None:
         cur = self._conn.cursor()
 
+        # 1) Tablas básicas (NO dependemos aún de columnas nuevas)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS persons (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 display_name TEXT,
                 is_pet       INTEGER NOT NULL DEFAULT 0,
                 cover_path   TEXT,
-                rep_sig      TEXT,     -- firma representativa (ahash) para agrupación
                 created_at   INTEGER NOT NULL,
                 updated_at   INTEGER NOT NULL
             );
         """)
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_persons_is_pet ON persons(is_pet);")
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_persons_rep_sig ON persons(rep_sig);")
-
         cur.execute("""
             CREATE TABLE IF NOT EXISTS person_alias (
                 id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,7 +50,6 @@ class PeopleStore:
                 FOREIGN KEY(person_id) REFERENCES persons(id) ON DELETE CASCADE
             );
         """)
-
         cur.execute("""
             CREATE TABLE IF NOT EXISTS faces (
                 id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,64 +60,57 @@ class PeopleStore:
                 h         REAL NOT NULL,
                 embedding BLOB,
                 quality   REAL,
-                sig       TEXT,        -- firma ahash 64-bit (hex)
                 ts        INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-                is_hidden INTEGER NOT NULL DEFAULT 0,
-                FOREIGN KEY(media_id) REFERENCES media(id) ON DELETE CASCADE
+                is_hidden INTEGER NOT NULL DEFAULT 0
             );
         """)
-        # migraciones idempotentes
-        self._add_column_if_missing(
-            "faces", "is_hidden", "INTEGER NOT NULL DEFAULT 0")
-        self._add_column_if_missing("faces", "sig", "TEXT")
-        self._add_column_if_missing("persons", "rep_sig", "TEXT")
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_faces_media   ON faces(media_id);")
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_faces_quality ON faces(quality);")
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_faces_hidden  ON faces(is_hidden);")
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_faces_sig     ON faces(sig);")
-
         cur.execute("""
             CREATE TABLE IF NOT EXISTS person_face (
                 person_id INTEGER NOT NULL,
                 face_id   INTEGER NOT NULL UNIQUE,
-                PRIMARY KEY(person_id, face_id),
-                FOREIGN KEY(person_id) REFERENCES persons(id) ON DELETE CASCADE,
-                FOREIGN KEY(face_id)   REFERENCES faces(id)   ON DELETE CASCADE
+                PRIMARY KEY(person_id, face_id)
             );
         """)
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_person_face_person ON person_face(person_id);")
-
         cur.execute("""
             CREATE TABLE IF NOT EXISTS face_suggestions (
                 face_id   INTEGER NOT NULL,
                 person_id INTEGER NOT NULL,
                 score     REAL,
-                state     TEXT NOT NULL DEFAULT 'pending', -- pending|accepted|rejected
-                PRIMARY KEY(face_id, person_id),
-                FOREIGN KEY(face_id)   REFERENCES faces(id)   ON DELETE CASCADE,
-                FOREIGN KEY(person_id) REFERENCES persons(id) ON DELETE CASCADE
+                state     TEXT NOT NULL DEFAULT 'pending',
+                PRIMARY KEY(face_id, person_id)
             );
         """)
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_face_sug_person ON face_suggestions(person_id);")
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_face_sug_state  ON face_suggestions(state);")
-
         cur.execute("""
             CREATE TABLE IF NOT EXISTS face_scan_state (
                 media_id   INTEGER PRIMARY KEY,
                 last_mtime INTEGER NOT NULL,
-                last_ts    INTEGER NOT NULL,
-                FOREIGN KEY(media_id) REFERENCES media(id) ON DELETE CASCADE
+                last_ts    INTEGER NOT NULL
             );
         """)
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_face_scan_ts ON face_scan_state(last_ts);")
+
+        # 2) Migraciones idempotentes (AÑADIR COLUMNAS SI FALTAN)
+        self._add_column_if_missing("faces", "sig", "TEXT")
+        self._add_column_if_missing(
+            "faces", "is_hidden", "INTEGER NOT NULL DEFAULT 0")
+        self._add_column_if_missing("persons", "rep_sig", "TEXT")
+
+        # 3) Índices (tras garantizar columnas)
+        def _try(sql: str):
+            try:
+                cur.execute(sql)
+            except sqlite3.OperationalError as e:
+                log("PeopleStore.ensure_schema idx skip:", e)
+
+        _try("CREATE INDEX IF NOT EXISTS idx_persons_is_pet   ON persons(is_pet);")
+        _try("CREATE INDEX IF NOT EXISTS idx_persons_rep_sig  ON persons(rep_sig);")
+        _try("CREATE INDEX IF NOT EXISTS idx_faces_media      ON faces(media_id);")
+        _try("CREATE INDEX IF NOT EXISTS idx_faces_quality    ON faces(quality);")
+        _try("CREATE INDEX IF NOT EXISTS idx_faces_hidden     ON faces(is_hidden);")
+        _try("CREATE INDEX IF NOT EXISTS idx_faces_sig        ON faces(sig);")
+        _try("CREATE INDEX IF NOT EXISTS idx_person_face_person ON person_face(person_id);")
+        _try("CREATE INDEX IF NOT EXISTS idx_face_sug_person  ON face_suggestions(person_id);")
+        _try("CREATE INDEX IF NOT EXISTS idx_face_sug_state   ON face_suggestions(state);")
+        _try("CREATE INDEX IF NOT EXISTS idx_face_scan_ts     ON face_scan_state(last_ts);")
 
         self._conn.commit()
 
@@ -132,12 +119,9 @@ class PeopleStore:
         cur.execute(f"PRAGMA table_info({table});")
         cols = {r[1] for r in cur.fetchall()}
         if column not in cols:
-            try:
-                cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl};")
-                self._conn.commit()
-                log(f"PeopleStore: columna añadida {table}.{column}")
-            except Exception as e:
-                log(f"PeopleStore: no se pudo añadir {table}.{column}:", e)
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl};")
+            self._conn.commit()
+            log(f"PeopleStore: columna añadida {table}.{column}")
 
     # --------------------------------------------------------------------- #
     # Helpers
@@ -299,6 +283,20 @@ class PeopleStore:
         cur.execute("UPDATE faces SET is_hidden=? WHERE id=?;",
                     (1 if hidden else 0, face_id))
         self._conn.commit()
+
+    # Limpieza de placeholders sin uso
+    def purge_empty_persons(self) -> int:
+        cur = self._conn.cursor()
+        cur.execute("""
+            DELETE FROM persons
+             WHERE id NOT IN (SELECT DISTINCT person_id FROM person_face)
+               AND id NOT IN (SELECT DISTINCT person_id FROM face_suggestions);
+        """)
+        n = cur.rowcount or 0
+        self._conn.commit()
+        if n:
+            log("PeopleStore: purge_empty_persons ->", n)
+        return n
 
     # --------------------------------------------------------------------- #
     # Agrupación por similitud de firma (rep_sig)
