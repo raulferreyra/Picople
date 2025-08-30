@@ -1,30 +1,30 @@
 from __future__ import annotations
 from typing import List, Tuple, Optional
 from pathlib import Path
-import numpy as np
 
 from PySide6.QtCore import QObject, Signal
 
 from picople.core.log import log
 from picople.infrastructure.db import Database
 from picople.infrastructure.people_store import PeopleStore
+from picople.infrastructure.people_avatars import PeopleAvatarService
 
 # Detector pluggable (OpenCV si está disponible)
 try:
     import cv2  # type: ignore
+    import numpy as np  # type: ignore
     _CV2_OK = True
 except Exception:
     _CV2_OK = False
 
 
 class FaceScanWorker(QObject):
-    started = Signal(int)                # total previstos (aprox de lote)
-    progress = Signal(int, int, str)     # i, total, path
+    started = Signal(int)
+    progress = Signal(int, int, str)
     info = Signal(str)
-    error = Signal(str, str)             # path, err
-    finished = Signal(dict)              # summary
+    error = Signal(str, str)
+    finished = Signal(dict)
 
-    # 👇👈 OJO: solo DOS parámetros (db_path, db_key). Se eliminó el "db" inicial.
     def __init__(self, db_path: str | Path, db_key: str):
         super().__init__()
         self.db_path = str(db_path)
@@ -33,15 +33,13 @@ class FaceScanWorker(QObject):
         self.store: Optional[PeopleStore] = None
         self._cancel = False
 
-        # Carga detector si hay OpenCV; si no, queda como no-op
         self._detector = None
         log("FaceScanWorker: OpenCV disponible:", _CV2_OK)
         if _CV2_OK:
             try:
                 cascade_path = getattr(cv2.data, "haarcascades", "")
                 cascade = cv2.CascadeClassifier(
-                    cascade_path + "haarcascade_frontalface_default.xml"
-                )
+                    cascade_path + "haarcascade_frontalface_default.xml")
                 if not cascade.empty():
                     self._detector = cascade
                     log("FaceScanWorker: cascade cargado OK")
@@ -52,35 +50,41 @@ class FaceScanWorker(QObject):
         else:
             log("FaceScanWorker: OpenCV no disponible; detector desactivado")
 
-    def _cv_imread_unicode(self, path: str):
-        try:
-            data = np.fromfile(path, dtype=np.uint8)
-            if data.size == 0:
-                return None
-            img = cv2.imdecode(data, cv2.IMREAD_COLOR)
-            return img
-        except Exception:
+    def cancel(self):
+        self._cancel = True
+        log("FaceScanWorker: cancel solicitado")
+
+    def _imread_u(self, path: str):
+        """
+        imread tolerante a rutas Unicode (Windows).
+        """
+        if not _CV2_OK:
             return None
+        try:
+            img = cv2.imread(path)
+            if img is not None:
+                return img
+        except Exception:
+            pass
+        try:
+            data = np.fromfile(path, dtype=np.uint8)  # type: ignore
+            if data.size:
+                return cv2.imdecode(data, cv2.IMREAD_COLOR)
+        except Exception as e:
+            log("FaceScanWorker: imread fallback error:", e)
+        return None
 
     def _detect_faces(self, img_path: str) -> List[Tuple[int, int, int, int]]:
         if not self._detector:
             return []
-        import cv2  # type: ignore
-
-        img = self._cv_imread_unicode(img_path)
+        img = self._imread_u(img_path)
         if img is None:
             log("FaceScanWorker: no se pudo leer imagen:", img_path)
             return []
-
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)  # type: ignore
         faces = self._detector.detectMultiScale(
-            gray, scaleFactor=1.08, minNeighbors=5, minSize=(32, 32)
-        )
+            gray, scaleFactor=1.1, minNeighbors=5, minSize=(32, 32))
         return [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in faces]
-
-    def cancel(self):
-        self._cancel = True
-        log("FaceScanWorker: cancel solicitado")
 
     def run(self):
         # 1) abrir DB en el hilo del worker
@@ -130,16 +134,28 @@ class FaceScanWorker(QObject):
                 boxes = self._detect_faces(path)
                 log(f"FaceScanWorker.run: [{i}/{total}] caras detectadas =", len(boxes))
                 for (x, y, w, h) in boxes:
-                    q = float(w * h)
+                    # 1) firma ligera para agrupación
+                    sig = PeopleAvatarService.face_signature(path, (x, y, w, h)) or \
+                        PeopleAvatarService.face_signature(thumb, (x, y, w, h))
+
+                    # 2) registrar la cara (guardamos sig)
                     face_id = self.store.add_face_by_media_id(
-                        mid, (x, y, w, h), embedding=None, quality=q
-                    )
-                    pid = self.store.create_person(
-                        display_name=None, is_pet=False, cover_path=thumb
-                    )
-                    self.store.add_suggestion(face_id, pid, score=q)
-                    log(
-                        f"FaceScanWorker: face_id={face_id} -> person_id={pid} (score={q})")
+                        mid, (x, y, w, h), embedding=None, quality=float(w*h), sig=sig)
+
+                    # 3) buscar persona candidata por similitud
+                    pid = None
+                    if sig:
+                        pid = self.store.find_person_by_signature(
+                            sig, threshold=10)
+
+                    # 4) si no hay candidata, crear placeholder UNA sola vez por cluster
+                    if pid is None:
+                        pid = self.store.create_person(
+                            display_name=None, is_pet=False, cover_path=thumb, rep_sig=sig)
+
+                    # 5) sugerir pertenencia
+                    self.store.add_suggestion(face_id, pid, score=float(w*h))
+                    log(f"FaceScanWorker: face_id={face_id} -> person_id={pid}")
 
                 faces_total += len(boxes)
                 self.store.mark_media_scanned(mid, item["mtime"])
