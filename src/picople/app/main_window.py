@@ -424,6 +424,11 @@ class MainWindow(QMainWindow):
     def _apply_theme(self) -> None:
         self.setStyleSheet(QSS_DARK if self.dark_mode else QSS_LIGHT)
 
+    def _update_theme_icon(self) -> None:
+        # ícono textual simple para el botón de tema
+        if hasattr(self, "btn_theme"):
+            self.btn_theme.setText("🌙" if self.dark_mode else "☀")
+
     def _icon_for_key(self, key: str) -> QIcon:
         style = self.style()
         mapping = {
@@ -478,7 +483,8 @@ class MainWindow(QMainWindow):
                 try:
                     from picople.infrastructure.people_store import PeopleStore
                     ps = PeopleStore(self._db)
-                    ps.purge_empty_persons()
+                    if hasattr(ps, "purge_empty_persons"):
+                        ps.purge_empty_persons()
                 except Exception as e:
                     log("MainWindow: warmup PeopleStore falló:", e)
 
@@ -516,7 +522,8 @@ class MainWindow(QMainWindow):
                 try:
                     from picople.infrastructure.people_store import PeopleStore
                     ps = PeopleStore(self._db)
-                    ps.purge_empty_persons()
+                    if hasattr(ps, "purge_empty_persons"):
+                        ps.purge_empty_persons()
                 except Exception as e:
                     log("MainWindow: warmup PeopleStore falló:", e)
 
