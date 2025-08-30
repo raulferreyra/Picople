@@ -2,7 +2,7 @@
 from __future__ import annotations
 from typing import Dict, Any, Optional, List
 
-from PySide6.QtCore import Qt, QSize, QModelIndex, QPoint
+from PySide6.QtCore import Qt, QSize, QModelIndex, QPoint, QTimer
 from PySide6.QtGui import QIcon, QPixmap, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListView, QStackedWidget, QToolButton,
@@ -27,19 +27,14 @@ class PeopleView(SectionView):
     """
 
     def __init__(self, db: Optional[Database] = None):
-        super().__init__(
-            "Personas y mascotas",
-            "Agrupación por caras (personas) y mascotas.",
-            compact=True,
-            show_header=True
-        )
+        super().__init__("Personas y mascotas",
+                         "Agrupación por caras (personas) y mascotas.", compact=True, show_header=True)
         self.db = db
         self.store: Optional[PeopleStore] = None
         try:
             if self.db and self.db.is_open:
                 self.store = PeopleStore(self.db)
         except Exception as e:
-            # Log explícito para no caer en placeholders “mágicamente”
             print(f"[PeopleView] PeopleStore init failed: {e}")
             self.store = None
 
@@ -57,7 +52,17 @@ class PeopleView(SectionView):
         self.stack.addWidget(self._page_detail)  # idx 1
         self.content_layout.addWidget(self.stack, 1)
 
+        # Guard: si por cualquier cosa la lista queda vacía, reintenta cargar
+        self._render_guard = QTimer(self)
+        self._render_guard.setInterval(2000)
+        self._render_guard.timeout.connect(self._render_guard_tick)
+        self._render_guard.start()
+
         self._reload_list()
+
+    def _render_guard_tick(self):
+        if self.stack.currentWidget() is self._page_list and self.model.rowCount() == 0:
+            self._reload_list()
 
     # ───────────────────────── API pública ─────────────────────────
     def refresh_from_db(self) -> None:
