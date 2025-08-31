@@ -198,44 +198,44 @@ Por definir (temporalmente **All rights reserved** hasta estabilizar).
 **Ver estado (tablas y conteos)**
 
 ```
-python -m picople.app.main info
+python -m picople.app.admin info
 ```
 
 **Purgar archivo de DB y crear uno vacío**
 
 ```
-python -m picople.app.main purge
+python -m picople.app.admin purge
 ```
 
 **Vaciar todo lo de Personas/Caras**
 
 ```
-python -m picople.app.main wipe-people --vacuum
+python -m picople.app.admin wipe-people --vacuum
 ```
 
 Si quieres crear tablas desde cero para que se apliquen migraciones limpiecitas:
 
 ```
-python -m picople.app.main wipe-people --drop --vacuum
-python -m picople.app.main migrate
+python -m picople.app.admin wipe-people --drop --vacuum
+python -m picople.app.admin migrate
 ```
 
 **Vaciar una tabla concreta**
 
 ```
-python -m picople.app.main wipe-table face_suggestions --vacuum
+python -m picople.app.admin wipe-table face_suggestions --vacuum
 ```
 
 O eliminarla para que se recree al abrir la app:
 
 ```
-python -m picople.app.main wipe-table face_suggestions --drop
-python -m picople.app.main migrate
+python -m picople.app.admin wipe-table face_suggestions --drop
+python -m picople.app.admin migrate
 ```
 
 **Vaciar/eliminar todas las tablas de usuario**
 
 ```
-python -m picople.app.main wipe-all --drop --vacuum
-python -m picople.app.main migrate
+python -m picople.app.admin wipe-all --drop --vacuum
+python -m picople.app.admin migrate
 ```
