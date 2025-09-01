@@ -103,38 +103,45 @@ class PeopleView(SectionView):
         return pm
 
     def _reload_list(self) -> None:
+        """Carga desde DB si hay store; si no, usa mock."""
         self.model.clear()
 
+        # Reintento perezoso
         if self.store is None and self.db and self.db.is_open:
             try:
                 self.store = PeopleStore(self.db)
+                print("[PeopleView] PeopleStore attached on reload.")
             except Exception as e:
                 print(f"[PeopleView] PeopleStore attach failed on reload: {e}")
                 self.store = None
 
         persons: List[Dict[str, Any]]
-        if self.store and hasattr(self.store, "list_persons_overview"):
-            persons = self.store.list_persons_overview()
+        if self.store:
+            persons = self.store.list_persons_overview(include_zero=False)
         else:
             persons = self._clusters_mock
 
         for p in persons:
-            icon = QIcon(self._circular_pixmap(p.get("cover")))
-            title = (p.get("title") or "").strip()
-            photos = int(p.get("photos_count", 0))
-            base = title if title else "Agregar nombre"
-            extra = f"\n{photos} foto{'s' if photos != 1 else ''}"
-            text = base + extra
-
+            pm = QPixmap(p.get("cover") or "")
+            if pm.isNull():
+                pm = QPixmap(TILE, TILE)
+                pm.fill(Qt.gray)
+            icon = QIcon(pm)
+            title = p.get("title") or "Agregar nombre"
+            photos = int(p.get("photos", p.get("suggestions_count", 0)))
+            text = f"{title}\n{photos} foto{'s' if photos != 1 else ''}"
             it = QStandardItem(icon, text)
             it.setEditable(False)
             it.setData(p, ROLE_DATA)
             self.model.appendRow(it)
 
         fm = self.list.fontMetrics()
-        cell_h = 12 + TILE + 10 + (fm.height() * 2) + 8
-        cell_w = 20 + TILE + 20
+        # doble línea de texto
+        two_lines = fm.height() * 2 + 6
+        cell_h = 12 + TILE + 8 + two_lines + 8
+        cell_w = 10 + TILE + 10
         self.list.setGridSize(QSize(cell_w, int(cell_h)))
+        # refresco suave
         QTimer.singleShot(
             0, lambda: self.list.setGridSize(self.list.gridSize()))
 
