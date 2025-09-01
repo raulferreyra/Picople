@@ -3,6 +3,7 @@ from typing import Optional, Tuple, List, Dict, Any
 
 import sqlite3
 import time
+import os
 
 from picople.infrastructure.db import Database
 from picople.core.paths import app_data_dir
@@ -147,9 +148,41 @@ class PeopleStore:
         except Exception:
             return 64
 
+    def _ensure_cover_if_missing(self, person_id: int) -> None:
+        """
+        Si la persona no tiene cover o el archivo no existe, intentamos generarlo
+        desde su mejor rostro confirmado.
+        """
+        cur = self._conn.cursor()
+        cur.execute("SELECT cover_path FROM persons WHERE id=?;", (person_id,))
+        row = cur.fetchone()
+        need = True
+        if row and row[0]:
+            try:
+                need = not os.path.exists(row[0])
+            except Exception:
+                need = True
+
+        if not need:
+            return
+
+        # Elige la cara confirmada con mayor 'quality'
+        cur.execute("""
+            SELECT f.id
+            FROM person_face pf
+            JOIN faces f ON f.id = pf.face_id
+            WHERE pf.person_id = ?
+            ORDER BY COALESCE(f.quality,0.0) DESC, f.ts DESC
+            LIMIT 1;
+        """, (person_id,))
+        r = cur.fetchone()
+        if r:
+            self.make_avatar_from_face(person_id, int(r[0]))
+
     # ------------------------------------------------------------------ #
     # Personas (clusters)
     # ------------------------------------------------------------------ #
+
     def create_person(self, display_name: Optional[str] = None, *,
                       is_pet: bool = False, cover_path: Optional[str] = None,
                       rep_sig: Optional[str] = None) -> int:
@@ -239,6 +272,10 @@ class PeopleStore:
 
     # Portadas desde rostro ---------------------------------------------- #
     def make_avatar_from_face(self, person_id: int, face_id: int) -> Optional[str]:
+        """
+        Genera y guarda (persons.cover_path) un recorte cuadrado del rostro.
+        """
+
         cur = self._conn.cursor()
         cur.execute("""
             SELECT m.thumb_path, m.path, f.x, f.y, f.w, f.h
@@ -249,11 +286,15 @@ class PeopleStore:
         row = cur.fetchone()
         if not row:
             return None
+
         src = row[0] or row[1]
         x, y, w, h = float(row[2]), float(row[3]), float(row[4]), float(row[5])
-        out = app_data_dir() / "avatars" / f"person_{person_id}.jpg"
+
+        out_dir = app_data_dir() / "avatars"
+        out_path = out_dir / f"person_{person_id}.jpg"
+
         path = PeopleAvatarService.crop_face_square(
-            src, (x, y, w, h), out_path=str(out), out_size=256, pad_ratio=0.35
+            src, (x, y, w, h), out_path=str(out_path), out_size=256, pad_ratio=0.35
         )
         if path:
             self.set_person_cover(person_id, path)
@@ -378,10 +419,6 @@ class PeopleStore:
         } for r in rows]
 
     def list_persons_overview(self, *, include_zero: bool = False) -> List[Dict[str, Any]]:
-        """
-        Resumen para la grilla: id, title, is_pet, cover, photos_count, suggestions_count.
-        Por defecto oculta personas sin fotos (0).
-        """
         cur = self._conn.cursor()
         cur.execute("""
             SELECT
@@ -400,13 +437,19 @@ class PeopleStore:
         rows = cur.fetchall()
         out = []
         for r in rows:
+            pid = int(r[0])
             photos = int(r[4] or 0)
             if not include_zero and photos == 0:
                 continue
+
+            # Asegura que haya avatar recortado
+            self._ensure_cover_if_missing(pid)
+
             out.append({
-                "id": int(r[0]),
+                "id": pid,
                 "title": r[1],
                 "is_pet": bool(r[2]),
+                # puede haber sido actualizado por _ensure_cover_if_missing
                 "cover": r[3],
                 "photos": photos,
                 "suggestions_count": int(r[5] or 0)

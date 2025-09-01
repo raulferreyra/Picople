@@ -126,6 +126,7 @@ class PeopleView(SectionView):
             if pm.isNull():
                 pm = QPixmap(TILE, TILE)
                 pm.fill(Qt.gray)
+            pm = self._circular_pixmap(p.get("cover"))
             icon = QIcon(pm)
             title = p.get("title") or "Agregar nombre"
             photos = int(p.get("photos", p.get("suggestions_count", 0)))
