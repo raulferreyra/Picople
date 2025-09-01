@@ -27,8 +27,12 @@ class PeopleView(SectionView):
     """
 
     def __init__(self, db: Optional[Database] = None):
-        super().__init__("Personas y mascotas",
-                         "Agrupación por caras (personas) y mascotas.", compact=True, show_header=True)
+        super().__init__(
+            "Personas y mascotas",
+            "Agrupación por caras (personas) y mascotas.",
+            compact=True,
+            show_header=True
+        )
         self.db = db
         self.store: Optional[PeopleStore] = None
         try:
@@ -142,7 +146,10 @@ class PeopleView(SectionView):
         cell_h = 12 + TILE + 8 + fm.height() + 8
         cell_w = 10 + TILE + 10
         self.list.setGridSize(QSize(cell_w, int(cell_h)))
-        self.list.update()
+
+        # 🔧 Forzar relayout/repintado correcto sin chocar con la sobrecarga de update(index)
+        self.list.scheduleDelayedItemsLayout()
+        self.list.viewport().update()
         QTimer.singleShot(
             0, lambda: self.list.setGridSize(self.list.gridSize()))
 
