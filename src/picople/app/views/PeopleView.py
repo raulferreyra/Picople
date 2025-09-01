@@ -122,13 +122,9 @@ class PeopleView(SectionView):
             persons = self._clusters_mock
 
         for p in persons:
-            pm = QPixmap(p.get("cover") or "")
-            if pm.isNull():
-                pm = QPixmap(TILE, TILE)
-                pm.fill(Qt.gray)
             pm = self._circular_pixmap(p.get("cover"))
             icon = QIcon(pm)
-            title = p.get("title") or "Agregar nombre"
+            title = (p.get("title") or "").strip() or "Agregar nombre"
             photos = int(p.get("photos", p.get("suggestions_count", 0)))
             text = f"{title}\n{photos} foto{'s' if photos != 1 else ''}"
             it = QStandardItem(icon, text)
@@ -269,10 +265,10 @@ class PeopleView(SectionView):
         if row < 0:
             return
         it = self.model.item(row)
-        data: Dict[str, Any] = it.data(ROLE_DATA)
-        photos = int(data.get("photos_count", 0))
+        data: Dict[str, Any] = it.data(ROLE_DATA) or {}
         title = (data.get("title") or "").strip() or "Agregar nombre"
-        it.setText(f"{title}\n{photos} fotos")
+        photos = int(data.get("photos", 0))
+        it.setText(f"{title}\n{photos} foto{'s' if photos != 1 else ''}")
 
     def _refresh_person_icon(self, pid: str) -> None:
         if self.store is None:
@@ -298,11 +294,11 @@ class PeopleView(SectionView):
         if row < 0:
             return
         it = self.model.item(row)
-        data: Dict[str, Any] = it.data(ROLE_DATA)
+        data: Dict[str, Any] = it.data(ROLE_DATA) or {}
         data["title"] = new_title
-        photos = int(data.get("photos_count", 0))
-        base = new_title.strip() or "Agregar nombre"
-        it.setText(f"{base}\n{photos} fotos")
+        photos = int(data.get("photos", 0))
+        base = (new_title or "").strip() or "Agregar nombre"
+        it.setText(f"{base}\n{photos} foto{'s' if photos != 1 else ''}")
         it.setData(data, ROLE_DATA)
 
     def _rename_person(self, idx: QModelIndex) -> None:
@@ -321,9 +317,9 @@ class PeopleView(SectionView):
             except Exception:
                 pass
         data["title"] = title
-        photos = int(data.get("photos_count", 0))
+        photos = int(data.get("photos", 0))
         base = title if title else "Agregar nombre"
-        it.setText(f"{base}\n{photos} fotos")
+        it.setText(f"{base}\n{photos} foto{'s' if photos != 1 else ''}")
         it.setData(data, ROLE_DATA)
 
     def _toggle_pet(self, idx: QModelIndex) -> None:

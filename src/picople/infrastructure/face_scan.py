@@ -146,26 +146,25 @@ class FaceScanWorker(QObject):
                 boxes, gray = self._detect_faces(img)
                 log(f"FaceScanWorker.run: [{i}/{total}] caras detectadas =", len(boxes))
 
+                boxes = self._detect_faces(path)
                 for (x, y, w, h) in boxes:
                     q = float(w * h)
-                    # 1) insertar cara
                     face_id = self.store.add_face_by_media_id(
                         mid, (x, y, w, h), embedding=None, quality=q
                     )
-                    # 2) firma por rostro (aHash de ROI)
-                    sig = _ahash_hex(gray[y:y+h, x:x+w]) if _CV2_OK else None
-                    if sig:
-                        self.store.set_face_sig(face_id, sig)
 
-                    # 3) agrupar por similitud de firma
-                    pid = self.store.upsert_person_for_sig(
-                        sig, cover_hint=thumb)
+                    # Persona sin nombre (sin cover inicial)
+                    pid = self.store.create_person(
+                        display_name=None, is_pet=False, cover_path=None)
 
-                    # 4) vincular confirmadamente la cara con la persona
-                    self.store.link_face_to_person(pid, face_id)
+                    # Sugerencia a esa persona
+                    self.store.add_suggestion(face_id, pid, score=q)
 
-                    # 5) generar/actualizar portada recortando el rostro
-                    self.store.make_avatar_from_face(pid, face_id)
+                    # ✨ Generar avatar recortado desde el bbox y dejarlo como cover
+                    try:
+                        self.store.make_avatar_from_face(pid, face_id)
+                    except Exception:
+                        pass
 
                 faces_total += len(boxes)
                 # marcar media como escaneada

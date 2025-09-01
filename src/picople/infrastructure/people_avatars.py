@@ -2,6 +2,8 @@ from __future__ import annotations
 from typing import Tuple, Optional
 from pathlib import Path
 
+from PIL import Image
+
 # No importes cv2 si no está; lo cargamos perezoso:
 try:
     import cv2  # type: ignore
@@ -33,53 +35,60 @@ class PeopleAvatarService:
                          *,
                          out_path: str,
                          out_size: int = 256,
-                         pad_ratio: float = 0.35) -> Optional[str]:
+                         pad_ratio: float = 0.25) -> Optional[str]:
         """
-        Crea un avatar cuadrado (zoom) a partir del rostro detectado.
-        - src_path: thumb o foto original
-        - bbox_xywh: coordenadas del rostro (en píxeles absolutos)
-        - out_path: ruta de salida (se crean carpetas)
-        - pad_ratio: margen adicional proporcional al lado mayor del rostro
+        Recorta un cuadrado centrado en la cara (bbox) con padding y lo guarda
+        como JPEG en out_path. Devuelve out_path o None si falla.
         """
-        if not _CV2_OK:
-            return None
-
-        img = _imread_unicode(src_path)
-        if img is None:
-            return None
-
-        h_img, w_img = img.shape[:2]
-        x, y, w, h = bbox_xywh
-        # ROI base
-        cx = x + w / 2.0
-        cy = y + h / 2.0
-        side = max(w, h) * (1.0 + pad_ratio)
-
-        # Cuadrado centrado en el rostro con padding
-        x0 = int(max(0, cx - side / 2.0))
-        y0 = int(max(0, cy - side / 2.0))
-        x1 = int(min(w_img, cx + side / 2.0))
-        y1 = int(min(h_img, cy + side / 2.0))
-
-        if x1 <= x0 or y1 <= y0:
-            return None
-
-        face = img[y0:y1, x0:x1]
-        if face.size == 0:
-            return None
-
-        # A 256x256
-        face = cv2.resize(face, (out_size, out_size),
-                          interpolation=cv2.INTER_AREA)  # type: ignore
-
-        out_p = Path(out_path)
-        out_p.parent.mkdir(parents=True, exist_ok=True)
-
-        # JPG de salida (calidad 92)
         try:
-            cv2.imencode(".jpg", face, [int(cv2.IMWRITE_JPEG_QUALITY), 92])[
-                1].tofile(str(out_p))  # type: ignore
+            im = Image.open(src_path).convert("RGB")
         except Exception:
             return None
 
+        W, H = im.size
+        x, y, w, h = bbox_xywh
+        # centro y lado con padding
+        cx = x + w * 0.5
+        cy = y + h * 0.5
+        side = max(w, h) * (1.0 + pad_ratio * 2.0)
+
+        # coordenadas iniciales
+        left = int(round(cx - side * 0.5))
+        top = int(round(cy - side * 0.5))
+        right = int(round(cx + side * 0.5))
+        bottom = int(round(cy + side * 0.5))
+
+        # clamp a bordes
+        left = max(0, left)
+        top = max(0, top)
+        right = min(W, right)
+        bottom = min(H, bottom)
+
+        # asegurar cuadrado
+        crop_w = right - left
+        crop_h = bottom - top
+        if crop_w != crop_h:
+            if crop_w > crop_h:
+                # expandir vertical si hay espacio
+                extra = crop_w - crop_h
+                top = max(0, top - extra // 2)
+                bottom = min(H, top + crop_w)
+            else:
+                extra = crop_h - crop_w
+                left = max(0, left - extra // 2)
+                right = min(W, left + crop_h)
+
+        # validación final
+        if right <= left or bottom <= top:
+            return None
+
+        face = im.crop((left, top, right, bottom))
+        face = face.resize((out_size, out_size), Image.LANCZOS)
+
+        out_p = Path(out_path)
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            face.save(out_p, format="JPEG", quality=92, optimize=True)
+        except Exception:
+            return None
         return str(out_p)

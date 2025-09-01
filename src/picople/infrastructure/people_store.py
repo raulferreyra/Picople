@@ -1,5 +1,7 @@
+# infrastructure/people_store.py
 from __future__ import annotations
 from typing import Optional, Tuple, List, Dict, Any
+from pathlib import Path
 
 import sqlite3
 import time
@@ -148,36 +150,82 @@ class PeopleStore:
         except Exception:
             return 64
 
-    def _ensure_cover_if_missing(self, person_id: int) -> None:
+    # ---------- Avatares (recorte de rostro) ----------
+    def _avatar_out_path(self, person_id: int) -> str:
+        out = app_data_dir() / "avatars" / f"person_{person_id}.jpg"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        return str(out)
+
+    def make_avatar_from_face(self, person_id: int, face_id: int,
+                              *, out_size: int = 256, pad_ratio: float = 0.25) -> Optional[str]:
         """
-        Si la persona no tiene cover o el archivo no existe, intentamos generarlo
-        desde su mejor rostro confirmado.
+        Crea un avatar recortando la cara indicada y lo guarda como portada de la persona.
+        Devuelve la ruta generada o None si falla.
         """
         cur = self._conn.cursor()
-        cur.execute("SELECT cover_path FROM persons WHERE id=?;", (person_id,))
-        row = cur.fetchone()
-        need = True
-        if row and row[0]:
-            try:
-                need = not os.path.exists(row[0])
-            except Exception:
-                need = True
-
-        if not need:
-            return
-
-        # Elige la cara confirmada con mayor 'quality'
         cur.execute("""
-            SELECT f.id
-            FROM person_face pf
-            JOIN faces f ON f.id = pf.face_id
-            WHERE pf.person_id = ?
-            ORDER BY COALESCE(f.quality,0.0) DESC, f.ts DESC
+            SELECT m.thumb_path, m.path, f.x, f.y, f.w, f.h
+            FROM faces f
+            JOIN media m ON m.id = f.media_id
+            WHERE f.id = ? AND f.is_hidden = 0;
+        """, (face_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+
+        src_path = row[0] or row[1]
+        bbox = (float(row[2]), float(row[3]), float(row[4]), float(row[5]))
+        out_path = self._avatar_out_path(person_id)
+
+        cropped = PeopleAvatarService.crop_face_square(
+            src_path, bbox, out_path=out_path, out_size=out_size, pad_ratio=pad_ratio
+        )
+        if cropped:
+            self.set_person_cover(person_id, cropped)
+            return cropped
+        return None
+
+    def ensure_cover_if_missing(self, person_id: int) -> Optional[str]:
+        """
+        Si la persona no tiene portada, intenta crearla desde:
+          1) la sugerencia con mejor score
+          2) una cara confirmada (person_face)
+        """
+        cur = self._conn.cursor()
+        cur.execute("SELECT cover_path FROM persons WHERE id=?", (person_id,))
+        row = cur.fetchone()
+        if row and row[0]:
+            return row[0]
+
+        # 1) Mejor sugerencia
+        cur.execute("""
+            SELECT face_id
+            FROM face_suggestions
+            WHERE person_id=? AND state='pending'
+            ORDER BY COALESCE(score,0) DESC
             LIMIT 1;
         """, (person_id,))
         r = cur.fetchone()
         if r:
-            self.make_avatar_from_face(person_id, int(r[0]))
+            path = self.make_avatar_from_face(person_id, int(r[0]))
+            if path:
+                return path
+
+        # 2) Una cara confirmada
+        cur.execute("""
+            SELECT face_id
+            FROM person_face
+            WHERE person_id=?
+            ORDER BY rowid DESC
+            LIMIT 1;
+        """, (person_id,))
+        r = cur.fetchone()
+        if r:
+            path = self.make_avatar_from_face(person_id, int(r[0]))
+            if path:
+                return path
+
+        return None
 
     # ------------------------------------------------------------------ #
     # Personas (clusters)
@@ -271,38 +319,44 @@ class PeopleStore:
         self._conn.commit()
 
     # Portadas desde rostro ---------------------------------------------- #
-    def make_avatar_from_face(self, person_id: int, face_id: int) -> Optional[str]:
-        """
-        Genera y guarda (persons.cover_path) un recorte cuadrado del rostro.
-        """
-
-        cur = self._conn.cursor()
-        cur.execute("""
-            SELECT m.thumb_path, m.path, f.x, f.y, f.w, f.h
-            FROM faces f
-            JOIN media m ON m.id = f.media_id
-            WHERE f.id = ?;
-        """, (face_id,))
-        row = cur.fetchone()
-        if not row:
-            return None
-
-        src = row[0] or row[1]
-        x, y, w, h = float(row[2]), float(row[3]), float(row[4]), float(row[5])
-
-        out_dir = app_data_dir() / "avatars"
-        out_path = out_dir / f"person_{person_id}.jpg"
-
-        path = PeopleAvatarService.crop_face_square(
-            src, (x, y, w, h), out_path=str(out_path), out_size=256, pad_ratio=0.35
-        )
-        if path:
-            self.set_person_cover(person_id, path)
-        return path
-
     def set_person_cover_from_face(self, person_id: int, face_id: int) -> Optional[str]:
         # compat: usa la misma ruta final de avatar
         return self.make_avatar_from_face(person_id, face_id)
+
+    def list_persons_with_suggestion_counts(self, *, include_pets: bool = True) -> List[Dict[str, Any]]:
+        where = "" if include_pets else "WHERE p.is_pet=0"
+        cur = self._conn.cursor()
+        cur.execute(f"""
+            SELECT
+                p.id,
+                COALESCE(p.display_name, '(Sin nombre)') AS title,
+                p.is_pet,
+                p.cover_path,
+                COALESCE( SUM(CASE WHEN fs.state='pending' THEN 1 ELSE 0 END), 0 ) AS sug_count
+            FROM persons p
+            LEFT JOIN face_suggestions fs ON fs.person_id = p.id
+            {where}
+            GROUP BY p.id
+            ORDER BY title COLLATE NOCASE;
+        """)
+        rows = cur.fetchall()
+        out: List[Dict[str, Any]] = []
+        for r in rows:
+            pid = int(r[0])
+            cover = r[3]
+            if not cover:
+                try:
+                    cover = self.ensure_cover_if_missing(pid) or ""
+                except Exception:
+                    cover = cover or ""
+            out.append({
+                "id": pid,
+                "title": r[1],
+                "is_pet": bool(r[2]),
+                "cover": cover,
+                "suggestions_count": int(r[4] or 0)
+            })
+        return out
 
     def generate_cover_for_person(self, person_id: int) -> Optional[str]:
         """
@@ -369,6 +423,25 @@ class PeopleStore:
         self._conn.commit()
 
     def accept_suggestion(self, face_id: int, person_id: int) -> None:
+        cur = self._conn.cursor()
+        # (código actual…) ↓
+        cur.execute("""
+            INSERT INTO person_face(person_id, face_id)
+            VALUES (?, ?)
+            ON CONFLICT(face_id) DO UPDATE SET person_id=excluded.person_id;
+        """, (person_id, face_id))
+        cur.execute("""
+            UPDATE face_suggestions
+               SET state = CASE
+                               WHEN person_id=? THEN 'accepted'
+                               ELSE 'rejected'
+                           END
+             WHERE face_id=?;
+        """, (person_id, face_id))
+        self._conn.commit()
+
+        # Si no hay portada, crea una desde la cara aceptada
+        self.ensure_cover_if_missing(person_id)
         self.link_face_to_person(person_id, face_id)
 
     def reject_suggestion(self, face_id: int, person_id: int) -> None:
@@ -435,22 +508,25 @@ class PeopleStore:
             ORDER BY photos DESC, title COLLATE NOCASE;
         """)
         rows = cur.fetchall()
-        out = []
+        out: List[Dict[str, Any]] = []
         for r in rows:
             pid = int(r[0])
             photos = int(r[4] or 0)
             if not include_zero and photos == 0:
                 continue
 
-            # Asegura que haya avatar recortado
-            self._ensure_cover_if_missing(pid)
+            # Asegura que haya avatar recortado y úsalo si se generó
+            cover = r[3] or ""
+            try:
+                cover = self.ensure_cover_if_missing(pid) or cover
+            except Exception:
+                pass
 
             out.append({
                 "id": pid,
                 "title": r[1],
                 "is_pet": bool(r[2]),
-                # puede haber sido actualizado por _ensure_cover_if_missing
-                "cover": r[3],
+                "cover": cover,
                 "photos": photos,
                 "suggestions_count": int(r[5] or 0)
             })
