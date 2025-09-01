@@ -1,9 +1,8 @@
-# app/views/PeopleView.py
 from __future__ import annotations
 from typing import Dict, Any, Optional, List
 
 from PySide6.QtCore import Qt, QSize, QModelIndex, QPoint, QTimer
-from PySide6.QtGui import QIcon, QPixmap, QStandardItem, QStandardItemModel
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QPainterPath, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListView, QStackedWidget, QToolButton,
     QLabel, QStyle, QMenu, QInputDialog
@@ -15,23 +14,15 @@ from .SectionView import SectionView
 from .PersonDetailView import PersonDetailView
 
 ROLE_DATA = Qt.UserRole + 100
-TILE = 160
+TILE = 128
 
 
 class PeopleView(SectionView):
-    """
-    Personas y mascotas:
-      • Lista: clusters (DB si disponible, mock si no)
-      • Detalle: PersonDetailView (Todos/Sugerencias) con botón “volver”
-      • Menú contextual en la lista: Renombrar / Mascota / Eliminar
-    """
-
     def __init__(self, db: Optional[Database] = None):
         super().__init__(
             "Personas y mascotas",
             "Agrupación por caras (personas) y mascotas.",
-            compact=True,
-            show_header=True
+            compact=True, show_header=True
         )
         self.db = db
         self.store: Optional[PeopleStore] = None
@@ -52,11 +43,10 @@ class PeopleView(SectionView):
         self._build_list_page()
         self._build_detail_page()
 
-        self.stack.addWidget(self._page_list)    # idx 0
-        self.stack.addWidget(self._page_detail)  # idx 1
+        self.stack.addWidget(self._page_list)
+        self.stack.addWidget(self._page_detail)
         self.content_layout.addWidget(self.stack, 1)
 
-        # Guard: si por cualquier cosa la lista queda vacía, reintenta cargar
         self._render_guard = QTimer(self)
         self._render_guard.setInterval(2000)
         self._render_guard.timeout.connect(self._render_guard_tick)
@@ -68,23 +58,6 @@ class PeopleView(SectionView):
         if self.stack.currentWidget() is self._page_list and self.model.rowCount() == 0:
             self._reload_list()
 
-    # ───────────────────────── API pública ─────────────────────────
-    def refresh_from_db(self) -> None:
-        """
-        Reintenta crear el store (por si falló al inicio) y recarga la lista desde DB.
-        Llamado por MainWindow al terminar FaceScanWorker.
-        """
-        if not (self.db and self.db.is_open):
-            return
-        if self.store is None:
-            try:
-                self.store = PeopleStore(self.db)
-                print("[PeopleView] PeopleStore reattached after scan.")
-            except Exception as e:
-                print(f"[PeopleView] PeopleStore reattach failed: {e}")
-                self.store = None
-        self._reload_list()
-
     # ───────────────────────── List page ─────────────────────────
     def _build_list_page(self) -> None:
         root = QVBoxLayout(self._page_list)
@@ -93,14 +66,14 @@ class PeopleView(SectionView):
 
         self.list = QListView(self._page_list)
         self.list.setViewMode(QListView.IconMode)
-        self.list.setSpacing(16)
+        self.list.setSpacing(22)
         self.list.setResizeMode(QListView.Adjust)
         self.list.setMovement(QListView.Static)
         self.list.setIconSize(QSize(TILE, TILE))
         self.list.setUniformItemSizes(False)
-        self.list.doubleClicked.connect(self._open_person)
+        self.list.setWordWrap(True)
+        self.list.doubleClicked.connect(self._on_double_clicked)
 
-        # menú contextual
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._open_context_menu)
 
@@ -109,93 +82,61 @@ class PeopleView(SectionView):
 
         root.addWidget(self.list, 1)
 
+    def _circular_pixmap(self, cover_path: str | None) -> QPixmap:
+        size = TILE
+        pm = QPixmap(size, size)
+        pm.fill(Qt.transparent)
+        painter = QPainter(pm)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        path = QPainterPath()
+        path.addEllipse(0, 0, size, size)
+        painter.setClipPath(path)
+
+        src = QPixmap(cover_path or "")
+        if src.isNull():
+            src = QPixmap(size, size)
+            src.fill(Qt.darkGray)
+        src = src.scaled(
+            size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        painter.drawPixmap(0, 0, src)
+        painter.end()
+        return pm
+
     def _reload_list(self) -> None:
-        """Carga desde DB si hay store; si no, usa mock."""
         self.model.clear()
 
-        # Reintento perezoso: si no hay store pero la DB está abierta, reintenta
         if self.store is None and self.db and self.db.is_open:
             try:
                 self.store = PeopleStore(self.db)
-                print("[PeopleView] PeopleStore attached on reload.")
             except Exception as e:
                 print(f"[PeopleView] PeopleStore attach failed on reload: {e}")
                 self.store = None
 
         persons: List[Dict[str, Any]]
-        if self.store:
-            persons = self.store.list_persons_with_suggestion_counts()
+        if self.store and hasattr(self.store, "list_persons_overview"):
+            persons = self.store.list_persons_overview()
         else:
             persons = self._clusters_mock
 
         for p in persons:
-            pm = QPixmap(p.get("cover") or "")
-            if pm.isNull():
-                pm = QPixmap(TILE, TILE)
-                pm.fill(Qt.gray)
-            icon = QIcon(pm)
-            title = p.get("title") or "Sin nombre"
-            sugs = int(p.get("suggestions_count", 0))
-            text = f"{title}  ({sugs})"
+            icon = QIcon(self._circular_pixmap(p.get("cover")))
+            title = (p.get("title") or "").strip()
+            photos = int(p.get("photos_count", 0))
+            base = title if title else "Agregar nombre"
+            extra = f"\n{photos} foto{'s' if photos != 1 else ''}"
+            text = base + extra
+
             it = QStandardItem(icon, text)
             it.setEditable(False)
             it.setData(p, ROLE_DATA)
             self.model.appendRow(it)
 
         fm = self.list.fontMetrics()
-        cell_h = 12 + TILE + 8 + fm.height() + 8
-        cell_w = 10 + TILE + 10
+        cell_h = 12 + TILE + 10 + (fm.height() * 2) + 8
+        cell_w = 20 + TILE + 20
         self.list.setGridSize(QSize(cell_w, int(cell_h)))
-
-        # 🔧 Forzar relayout/repintado correcto sin chocar con la sobrecarga de update(index)
-        self.list.scheduleDelayedItemsLayout()
-        self.list.viewport().update()
         QTimer.singleShot(
             0, lambda: self.list.setGridSize(self.list.gridSize()))
-
-    def _find_model_row_by_person_id(self, pid: str) -> int:
-        for row in range(self.model.rowCount()):
-            data = self.model.item(row).data(ROLE_DATA)
-            if data and str(data.get("id")) == str(pid):
-                return row
-        return -1
-
-    def _update_person_label(self, pid: str, new_sug_count: int) -> None:
-        row = self._find_model_row_by_person_id(pid)
-        if row < 0:
-            return
-        it = self.model.item(row)
-        data: Dict[str, Any] = it.data(ROLE_DATA)
-        data["suggestions_count"] = int(new_sug_count)
-        title = data.get("title") or "Sin nombre"
-        it.setText(f"{title}  ({new_sug_count})")
-        it.setData(data, ROLE_DATA)
-
-    def _refresh_person_icon(self, pid: str) -> None:
-        """Recarga el ícono (portada) del item tras cambiar cover en el detalle."""
-        if self.store is None:
-            return
-        row = self._find_model_row_by_person_id(pid)
-        if row < 0:
-            return
-        it = self.model.item(row)
-        data: Dict[str, Any] = it.data(ROLE_DATA) or {}
-        # Vuelve a consultar a la store (para obtener cover_path actualizado)
-        try:
-            persons = self.store.list_persons_with_suggestion_counts()
-            match = next((p for p in persons if str(
-                p.get("id")) == str(pid)), None)
-        except Exception:
-            match = None
-        cover = (match or {}).get("cover") or data.get("cover") or ""
-        pm = QPixmap(cover) if cover else QPixmap(TILE, TILE)
-        if pm.isNull():
-            pm = QPixmap(TILE, TILE)
-            pm.fill(Qt.gray)
-        it.setIcon(QIcon(pm))
-        # Actualiza el dict guardado
-        data["cover"] = cover
-        it.setData(data, ROLE_DATA)
 
     # ──────────────────────── Detail page ────────────────────────
     def _build_detail_page(self) -> None:
@@ -217,14 +158,12 @@ class PeopleView(SectionView):
 
         hdr.addWidget(self.btn_back)
         hdr.addWidget(lbl, 1)
-
         root.addLayout(hdr)
 
         self.detail_container = QStackedWidget(self._page_detail)
         root.addWidget(self.detail_container, 1)
 
     def _on_back_clicked(self) -> None:
-        """Si estamos en Sugerencias, vuelve a Todos. Si ya estamos en Todos, vuelve a la lista."""
         current = self.detail_container.currentWidget()
         if isinstance(current, PersonDetailView) and current.is_on_suggestions():
             current.show_all()
@@ -240,14 +179,18 @@ class PeopleView(SectionView):
         self.stack.setCurrentIndex(0)
         self.set_header_visible(True)
 
-    def _open_person(self, idx: QModelIndex) -> None:
+    def _on_double_clicked(self, idx: QModelIndex) -> None:
         data: Dict[str, Any] = idx.data(ROLE_DATA)
         if not data:
             return
+        pid = str(data.get("id", ""))
+        title = (data.get("title") or "").strip()
+        if not title:
+            # si no tiene nombre, doble clic renombra
+            self._rename_person(idx)
+            return
 
-        self._current_person_id = str(data.get("id", ""))
-        person_title = data.get("title") or "Sin nombre"
-
+        self._current_person_id = pid
         self.set_header_visible(False)
 
         while self.detail_container.count():
@@ -255,33 +198,20 @@ class PeopleView(SectionView):
             self.detail_container.removeWidget(w)
             w.deleteLater()
 
-        # DB si hay store, si no mock
         if self.store:
             detail = PersonDetailView(
-                person_id=int(self._current_person_id),
-                person_title=person_title,
-                store=self.store,
-                parent=self._page_detail
+                person_id=int(pid), person_title=title, store=self.store, parent=self._page_detail
             )
         else:
-            detail = PersonDetailView(
-                cluster=data,  # mock
-                parent=self._page_detail
-            )
+            detail = PersonDetailView(cluster=data, parent=self._page_detail)
 
-        # Mantener el conteo y el título sincronizados
+        # sincronizar cambios
         detail.suggestionCountChanged.connect(
-            lambda n, pid=self._current_person_id: self._update_person_label(
-                pid, n)
-        )
+            lambda n, _pid=pid: self._update_person_label(_pid, n))
         detail.titleChanged.connect(
-            lambda new_title, pid=self._current_person_id: self._apply_title_change(
-                pid, new_title)
-        )
-        # Refrescar ícono/portada cuando se cambie desde el detalle
+            lambda new_title, _pid=pid: self._apply_title_change(_pid, new_title))
         detail.coverChanged.connect(
-            lambda pid=self._current_person_id: self._refresh_person_icon(pid)
-        )
+            lambda _pid=pid: self._refresh_person_icon(_pid))
 
         self.detail_container.addWidget(detail)
         self.detail_container.setCurrentWidget(detail)
@@ -318,6 +248,43 @@ class PeopleView(SectionView):
         elif act == act_delete:
             self._delete_person(idx)
 
+    # ─────────────────────── utilidades modelo ───────────────────────
+    def _find_model_row_by_person_id(self, pid: str) -> int:
+        for row in range(self.model.rowCount()):
+            data = self.model.item(row).data(ROLE_DATA)
+            if data and str(data.get("id")) == str(pid):
+                return row
+        return -1
+
+    def _update_person_label(self, pid: str, _new_sug_count: int) -> None:
+        row = self._find_model_row_by_person_id(pid)
+        if row < 0:
+            return
+        it = self.model.item(row)
+        data: Dict[str, Any] = it.data(ROLE_DATA)
+        photos = int(data.get("photos_count", 0))
+        title = (data.get("title") or "").strip() or "Agregar nombre"
+        it.setText(f"{title}\n{photos} fotos")
+
+    def _refresh_person_icon(self, pid: str) -> None:
+        if self.store is None:
+            return
+        row = self._find_model_row_by_person_id(pid)
+        if row < 0:
+            return
+        it = self.model.item(row)
+        data: Dict[str, Any] = it.data(ROLE_DATA) or {}
+        try:
+            persons = self.store.list_persons_overview()
+            match = next((p for p in persons if str(
+                p.get("id")) == str(pid)), None)
+        except Exception:
+            match = None
+        cover = (match or {}).get("cover") or data.get("cover") or ""
+        it.setIcon(QIcon(self._circular_pixmap(cover)))
+        data["cover"] = cover
+        it.setData(data, ROLE_DATA)
+
     def _apply_title_change(self, pid: str, new_title: str) -> None:
         row = self._find_model_row_by_person_id(pid)
         if row < 0:
@@ -325,38 +292,31 @@ class PeopleView(SectionView):
         it = self.model.item(row)
         data: Dict[str, Any] = it.data(ROLE_DATA)
         data["title"] = new_title
-        count = int(data.get("suggestions_count", 0))
-        it.setText(f"{new_title or 'Sin nombre'}  ({count})")
+        photos = int(data.get("photos_count", 0))
+        base = new_title.strip() or "Agregar nombre"
+        it.setText(f"{base}\n{photos} fotos")
         it.setData(data, ROLE_DATA)
 
     def _rename_person(self, idx: QModelIndex) -> None:
         it = self.model.itemFromIndex(idx)
         data: Dict[str, Any] = it.data(ROLE_DATA) or {}
-        old = data.get("title") or "Sin nombre"
-
-        new, ok = QInputDialog.getText(
-            self, "Renombrar persona/mascota", "", text=old)
+        old = (data.get("title") or "").strip()
+        if not old:
+            old = ""
+        new, ok = QInputDialog.getText(self, "Asignar nombre", "", text=old)
         if not ok:
             return
         title = new.strip()
-        if not title or title == old:
-            return
-
         if self.store:
             try:
-                self.store.set_person_name(int(data["id"]), title)
+                self.store.set_person_name(int(data["id"]), title or None)
             except Exception:
                 pass
         data["title"] = title
-        count = int(data.get("suggestions_count", 0))
-        it.setText(f"{title}  ({count})")
+        photos = int(data.get("photos_count", 0))
+        base = title if title else "Agregar nombre"
+        it.setText(f"{base}\n{photos} fotos")
         it.setData(data, ROLE_DATA)
-
-        # si está abierta en detalle, actualiza su header
-        if self._current_person_id and str(data["id"]) == str(self._current_person_id):
-            current = self.detail_container.currentWidget()
-            if isinstance(current, PersonDetailView):
-                current.set_title(title)
 
     def _toggle_pet(self, idx: QModelIndex) -> None:
         it = self.model.itemFromIndex(idx)
@@ -364,7 +324,6 @@ class PeopleView(SectionView):
         new_flag = not bool(data.get("is_pet"))
         if self.store:
             try:
-                # Asegúrate de tener este método en PeopleStore
                 self.store.set_is_pet(int(data["id"]), new_flag)
             except Exception:
                 pass
@@ -386,20 +345,16 @@ class PeopleView(SectionView):
         if self._current_person_id and str(pid) == str(self._current_person_id):
             self._go_back_to_list()
 
-    # ────────────────────────── Mock data ─────────────────────────
+    # ────────────────────────── Mock ──────────────────────────
     def _mock_clusters(self) -> list[Dict[str, Any]]:
         out: list[Dict[str, Any]] = []
         for i in range(1, 9):
             out.append({
                 "id": i,
-                "title": f"Persona {i}",
+                "title": "",
                 "cover": "",
                 "is_pet": False,
-                "suggestions": [
-                    {"id": f"{i}-s1", "thumb": ""},
-                    {"id": f"{i}-s2", "thumb": ""},
-                    {"id": f"{i}-s3", "thumb": ""},
-                ],
-                "suggestions_count": 3,
+                "photos_count": 1,
+                "suggestions_count": 0,
             })
         return out
