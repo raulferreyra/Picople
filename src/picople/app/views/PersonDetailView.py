@@ -229,13 +229,12 @@ class PersonDetailView(QWidget):
 
         thumbs: List[str] = []
         if self.store and self.person_id is not None:
-            media = self.store.list_person_media(
+            rows = self.store.list_person_media_faces(
                 self.person_id, limit=400, offset=0)
-            thumbs = [m.get("thumb_path") or m.get("path") for m in media]
+            thumbs = [r.get("face_thumb") for r in rows if r.get("face_thumb")]
 
         if not thumbs:
-            ph = QLabel(
-                "Aún no has confirmado fotos para esta persona.", self.page_all)
+            ph = QLabel("No hay elementos confirmados aún.", self.page_all)
             ph.setObjectName("SectionText")
             self._grid_all.addWidget(ph, 0, 0)
             return
@@ -254,8 +253,7 @@ class PersonDetailView(QWidget):
                 pm.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             lab.setStyleSheet(
                 "background: rgba(255,255,255,0.06); border-radius: 6px;")
-            r = i // cols
-            c = i % cols
+            r, c = divmod(i, cols)
             self._grid_all.addWidget(lab, r, c)
 
     def _load_suggestions(self):
@@ -271,8 +269,6 @@ class PersonDetailView(QWidget):
                 self.person_id, limit=400, offset=0)
             self._sugs = [
                 {"id": str(r["face_id"]), "thumb": r["thumb"]} for r in rows]
-        elif self.cluster:
-            self._sugs = list(self.cluster.get("suggestions", []))
 
         cols = max(1, self.width() // (TILE + 16))
         for i, sug in enumerate(self._sugs):
@@ -282,8 +278,7 @@ class PersonDetailView(QWidget):
             tile.rejectClicked.connect(self._on_reject)
             tile.discardClicked.connect(self._on_discard)
             tile.coverClicked.connect(self._on_set_cover)
-            r = i // cols
-            c = i % cols
+            r, c = divmod(i, cols)
             self.grid.addWidget(tile, r, c)
 
         self._update_sug_link_text()

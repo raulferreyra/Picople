@@ -1,91 +1,122 @@
 # src/picople/app/admin.py
 from __future__ import annotations
-
 import argparse
 from getpass import getpass
 from pathlib import Path
-from typing import Iterable
+from shutil import rmtree
 
-from picople.core.paths import app_data_dir
 from picople.core.log import log
+from picople.core.paths import app_data_dir
 from picople.infrastructure.db import Database
+from picople.infrastructure.people_store import PeopleStore
 
 
-def default_db_path() -> Path:
-    return app_data_dir() / "db" / "picople.db"
+def _prompt_key() -> str:
+    pw = getpass("Clave de la base: ")
+    if not pw:
+        raise SystemExit(2)
+    return pw
 
 
-def open_db(db_path: Path, key: str) -> Database:
+def _table_exists(conn, name: str) -> bool:
+    cur = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?;", (name,)
+    )
+    return cur.fetchone() is not None
+
+
+def _delete_all(conn, table: str) -> None:
+    if _table_exists(conn, table):
+        conn.execute(f"DELETE FROM {table};")
+        log("admin:", f"TRUNCATE {table}")
+    else:
+        log("admin:", f"tabla no existe (skip) {table}")
+
+
+def _open_db_and_migrate(pw: str) -> Database:
+    db_path = app_data_dir() / "db" / "picople.db"
     db = Database(db_path)
-    db.open(key)
+    db.open(pw)
+    # Inicializa/migra esquema de personas/caras si hiciera falta
+    try:
+        PeopleStore(db)  # dispara _ensure_schema()
+    except Exception as e:
+        log("admin: PeopleStore init (para migrar) lanzó:", e)
     return db
 
 
-def _ask_key(passed: str | None) -> str:
-    return passed if passed else getpass("Clave de la base: ")
-
-
-def cmd_info(args) -> int:
-    db_path = Path(args.db or default_db_path())
-    key = _ask_key(args.key)
-    db = open_db(db_path, key)
-    cur = db.conn.cursor()
-    cur.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
-    tabs = [r[0] for r in cur.fetchall()]
-    print(f"DB: {db_path}")
-    for t in sorted(tabs):
-        try:
-            cur.execute(f"SELECT COUNT(*) FROM {t};")
-            n = cur.fetchone()[0]
-        except Exception as e:
-            n = f"error: {e}"
-        print(f"  • {t:24} {n}")
-    return 0
-
+# ──────────────────────────────────────────────────────────────────────────────
+# Comandos
+# ──────────────────────────────────────────────────────────────────────────────
 
 def cmd_wipe_people(args) -> int:
-    db_path = Path(args.db or default_db_path())
-    key = _ask_key(args.key)
-    db = open_db(db_path, key)
-    log("Vaciando tablas de People…")
-    db.conn.executescript("""
-        DELETE FROM person_face;
-        DELETE FROM face_suggestions;
-        DELETE FROM faces;
-        DELETE FROM person_alias;
-        DELETE FROM persons;
-        DELETE FROM face_scan_state;
-    """)
-    db.conn.commit()
-    if args.vacuum:
-        db.conn.execute("VACUUM;")
-        db.conn.commit()
-        log("VACUUM listo.")
-    log("Wipe People listo.")
+    pw = _prompt_key()
+    db = _open_db_and_migrate(pw)
+    conn = db.conn
+
+    log("Vaciando datos de Personas/Caras/Sugerencias…")
+    conn.execute("BEGIN;")
+    # el orden importa por FKs
+    for t in ("person_face", "face_suggestions", "faces",
+              "person_alias", "persons", "face_scan_state"):
+        _delete_all(conn, t)
+    conn.execute("COMMIT;")
+
+    if getattr(args, "vacuum", False):
+        try:
+            conn.execute("VACUUM;")
+            log("VACUUM ok")
+        except Exception as e:
+            log("VACUUM error:", e)
     return 0
 
+
+def cmd_wipe_faces_cache(args) -> int:
+    faces_dir = app_data_dir() / "faces"
+    if faces_dir.exists():
+        rmtree(faces_dir, ignore_errors=True)
+        log("Faces cache borrada:", faces_dir)
+    else:
+        log("Faces cache no existe:", faces_dir)
+    return 0
+
+
+def cmd_wipe_all(args) -> int:
+    # Limpia tablas de personas/caras y cache asociada
+    rc1 = cmd_wipe_people(argparse.Namespace(
+        vacuum=getattr(args, "vacuum", False)))
+    rc2 = cmd_wipe_faces_cache(args)
+    return rc1 or rc2
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CLI
+# ──────────────────────────────────────────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="python -m picople.app.admin", description="Herramientas de mantenimiento Picople")
-    p.add_argument(
-        "--db", help="Ruta de la base (por defecto, la del perfil).")
-    p.add_argument("--key", help="Clave de la base.")
+        prog="picople-admin", description="Utilidades de mantenimiento Picople")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("info", help="Listar tablas y conteos").set_defaults(
-        func=cmd_info)
+    wpp = sub.add_parser(
+        "wipe-people", help="Borra personas/caras/sugerencias y estado de escaneo")
+    wpp.add_argument("--vacuum", action="store_true",
+                     help="Compactar la base tras borrar")
+    wpp.set_defaults(func=cmd_wipe_people)
 
-    wp = sub.add_parser(
-        "wipe-people", help="Vaciar datos de Personas/Caras/Sugerencias")
-    wp.add_argument("--vacuum", action="store_true",
-                    help="Ejecutar VACUUM al terminar")
-    wp.set_defaults(func=cmd_wipe_people)
+    wfc = sub.add_parser("wipe-faces-cache",
+                         help="Borra cache de recortes de rostro")
+    wfc.set_defaults(func=cmd_wipe_faces_cache)
+
+    wall = sub.add_parser("wipe-all", help="Wipe people + cache de rostros")
+    wall.add_argument("--vacuum", action="store_true",
+                      help="Compactar la base tras borrar")
+    wall.set_defaults(func=cmd_wipe_all)
+
     return p
 
 
-def main(argv: Iterable[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.func(args)

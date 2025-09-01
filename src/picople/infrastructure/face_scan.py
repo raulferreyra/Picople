@@ -1,21 +1,43 @@
+# src/picople/infrastructure/face_scan.py
 from __future__ import annotations
 from typing import List, Tuple, Optional
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
+import numpy as np
+from PIL import Image
+from picople.core.paths import app_data_dir
+
 from picople.core.log import log
 from picople.infrastructure.db import Database
 from picople.infrastructure.people_store import PeopleStore
 from picople.infrastructure.people_avatars import PeopleAvatarService
 
-# Detector pluggable (OpenCV si está disponible)
 try:
     import cv2  # type: ignore
-    import numpy as np  # type: ignore
     _CV2_OK = True
 except Exception:
     _CV2_OK = False
+
+
+def _imread_unicode(path: str):
+    try:
+        data = np.fromfile(path, dtype=np.uint8)
+        img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        return img
+    except Exception:
+        return cv2.imread(path)
+
+
+def _dh_hash_hex(img: Image.Image) -> str:
+    g = img.convert("L").resize((9, 8), Image.LANCZOS)
+    arr = np.asarray(g, dtype=np.int16)
+    diff = arr[:, 1:] > arr[:, :-1]
+    bits = 0
+    for v in diff.flatten():
+        bits = (bits << 1) | int(bool(v))
+    return f"{bits:016x}"
 
 
 class FaceScanWorker(QObject):
@@ -54,40 +76,43 @@ class FaceScanWorker(QObject):
         self._cancel = True
         log("FaceScanWorker: cancel solicitado")
 
-    def _imread_u(self, path: str):
-        """
-        imread tolerante a rutas Unicode (Windows).
-        """
-        if not _CV2_OK:
-            return None
-        try:
-            img = cv2.imread(path)
-            if img is not None:
-                return img
-        except Exception:
-            pass
-        try:
-            data = np.fromfile(path, dtype=np.uint8)  # type: ignore
-            if data.size:
-                return cv2.imdecode(data, cv2.IMREAD_COLOR)
-        except Exception as e:
-            log("FaceScanWorker: imread fallback error:", e)
-        return None
-
     def _detect_faces(self, img_path: str) -> List[Tuple[int, int, int, int]]:
         if not self._detector:
             return []
-        img = self._imread_u(img_path)
+        img = _imread_unicode(img_path)
         if img is None:
             log("FaceScanWorker: no se pudo leer imagen:", img_path)
             return []
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)  # type: ignore
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         faces = self._detector.detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=5, minSize=(32, 32))
+            gray, scaleFactor=1.1, minNeighbors=5, minSize=(32, 32)
+        )
         return [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in faces]
 
+    def _face_sig_hex(self, src_img: str, bbox_xywh: Tuple[int, int, int, int]) -> Optional[str]:
+        # Genera recorte y calcula dHash (hex)
+        try:
+            out_tmp = PeopleAvatarService.crop_face_square(
+                src_path=src_img, bbox_xywh=bbox_xywh,
+                out_path=str(app_tmp := (
+                    Path(src_img).parent / "__picople_tmp_face.jpg")),
+                out_size=64, pad_ratio=0.35
+            )
+            if not out_tmp:
+                return None
+            with Image.open(out_tmp) as im:
+                sig = _dh_hash_hex(im)
+            try:
+                Path(app_tmp).unlink(missing_ok=True)
+            except Exception:
+                pass
+            return sig
+        except Exception as e:
+            log("FaceScanWorker: _face_sig_hex fallo:", e)
+            return None
+
     def run(self):
-        # 1) abrir DB en el hilo del worker
+        # abrir DB en el hilo del worker
         try:
             self.db = Database(Path(self.db_path))
             self.db.open(self.db_key)
@@ -134,28 +159,45 @@ class FaceScanWorker(QObject):
                 boxes = self._detect_faces(path)
                 log(f"FaceScanWorker.run: [{i}/{total}] caras detectadas =", len(boxes))
                 for (x, y, w, h) in boxes:
-                    # 1) firma ligera para agrupación
-                    sig = PeopleAvatarService.face_signature(path, (x, y, w, h)) or \
-                        PeopleAvatarService.face_signature(thumb, (x, y, w, h))
+                    q = float(w * h)
+                    sig = None
+                    try:
+                        # recorte temporal pequeño solo para firma
+                        tmp = PeopleAvatarService.crop_face_square(
+                            src_path=thumb, bbox_xywh=(x, y, w, h),
+                            out_path=str(
+                                (Path(thumb).parent / "__picople_tmp_face_sig.jpg")),
+                            out_size=64, pad_ratio=0.35)
+                        if not tmp:
+                            tmp = PeopleAvatarService.crop_face_square(
+                                src_path=path, bbox_xywh=(x, y, w, h),
+                                out_path=str(
+                                    (Path(path).parent / "__picople_tmp_face_sig.jpg")),
+                                out_size=64, pad_ratio=0.35)
+                        if tmp:
+                            with Image.open(tmp) as im:
+                                sig = _dh_hash_hex(im)
+                            try:
+                                Path(tmp).unlink(missing_ok=True)
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        log("FaceScanWorker: firma falló:", e)
 
-                    # 2) registrar la cara (guardamos sig)
                     face_id = self.store.add_face_by_media_id(
-                        mid, (x, y, w, h), embedding=None, quality=float(w*h), sig=sig)
+                        mid, (x, y, w, h), embedding=None, quality=float(w*h), sig=sig
+                    )
 
-                    # 3) buscar persona candidata por similitud
-                    pid = None
-                    if sig:
-                        pid = self.store.find_person_by_signature(
-                            sig, threshold=10)
-
-                    # 4) si no hay candidata, crear placeholder UNA sola vez por cluster
+                    # agrupar por similitud (umbral un poco más alto)
+                    pid = self.store.nearest_person_by_sig(
+                        sig, max_dist=18) if sig else None
                     if pid is None:
                         pid = self.store.create_person(
                             display_name=None, is_pet=False, cover_path=thumb, rep_sig=sig)
 
-                    # 5) sugerir pertenencia
                     self.store.add_suggestion(face_id, pid, score=float(w*h))
-                    log(f"FaceScanWorker: face_id={face_id} -> person_id={pid}")
+                    log(
+                        f"FaceScanWorker: face_id={face_id} -> person_id={pid} (score={q})")
 
                 faces_total += len(boxes)
                 self.store.mark_media_scanned(mid, item["mtime"])

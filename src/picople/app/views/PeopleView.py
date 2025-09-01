@@ -142,6 +142,9 @@ class PeopleView(SectionView):
         cell_h = 12 + TILE + 8 + fm.height() + 8
         cell_w = 10 + TILE + 10
         self.list.setGridSize(QSize(cell_w, int(cell_h)))
+        self.list.update()
+        QTimer.singleShot(
+            0, lambda: self.list.setGridSize(self.list.gridSize()))
 
     def _find_model_row_by_person_id(self, pid: str) -> int:
         for row in range(self.model.rowCount()):
