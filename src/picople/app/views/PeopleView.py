@@ -117,7 +117,7 @@ class PeopleView(SectionView):
 
         persons: List[Dict[str, Any]]
         if self.store:
-            persons = self.store.list_persons_overview(include_zero=False)
+            persons = self.store.list_persons_overview(include_zero=True)
         else:
             persons = self._clusters_mock
 

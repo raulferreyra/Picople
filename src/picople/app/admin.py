@@ -1,8 +1,6 @@
-# src/picople/app/admin.py
 from __future__ import annotations
 import argparse
 from getpass import getpass
-from pathlib import Path
 from shutil import rmtree
 
 from picople.core.log import log
@@ -72,21 +70,52 @@ def cmd_wipe_people(args) -> int:
 
 
 def cmd_wipe_faces_cache(args) -> int:
+    # Borrar recortes antiguos (si existieran)
     faces_dir = app_data_dir() / "faces"
+    avatars_dir = app_data_dir() / "avatars"
+
     if faces_dir.exists():
         rmtree(faces_dir, ignore_errors=True)
         log("Faces cache borrada:", faces_dir)
     else:
         log("Faces cache no existe:", faces_dir)
+
+    if avatars_dir.exists():
+        rmtree(avatars_dir, ignore_errors=True)
+        log("Avatars cache borrada:", avatars_dir)
+    else:
+        log("Avatars cache no existe:", avatars_dir)
+
     return 0
 
 
 def cmd_wipe_all(args) -> int:
-    # Limpia tablas de personas/caras y cache asociada
+    # Limpia tablas de personas/caras y cachés asociadas
     rc1 = cmd_wipe_people(argparse.Namespace(
         vacuum=getattr(args, "vacuum", False)))
     rc2 = cmd_wipe_faces_cache(args)
     return rc1 or rc2
+
+
+def cmd_regen_avatars(args) -> int:
+    """Regenera portadas para todas las personas usando sugerencias/caras."""
+    pw = _prompt_key()
+    db = _open_db_and_migrate(pw)
+    try:
+        store = PeopleStore(db)
+        cur = db.conn.cursor()
+        cur.execute("SELECT id FROM persons;")
+        for (pid,) in cur.fetchall():
+            path = store.ensure_cover_if_missing(
+                pid) or store.generate_cover_for_person(pid)
+            if path:
+                print(f"[avatars] person {pid} -> {path}")
+        return 0
+    finally:
+        try:
+            db.conn.close()
+        except Exception:
+            pass
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -105,13 +134,17 @@ def build_parser() -> argparse.ArgumentParser:
     wpp.set_defaults(func=cmd_wipe_people)
 
     wfc = sub.add_parser("wipe-faces-cache",
-                         help="Borra cache de recortes de rostro")
+                         help="Borra cachés de recortes de rostro/avatars")
     wfc.set_defaults(func=cmd_wipe_faces_cache)
 
-    wall = sub.add_parser("wipe-all", help="Wipe people + cache de rostros")
+    wall = sub.add_parser("wipe-all", help="Wipe people + cachés de rostros")
     wall.add_argument("--vacuum", action="store_true",
                       help="Compactar la base tras borrar")
     wall.set_defaults(func=cmd_wipe_all)
+
+    sp = sub.add_parser(
+        "regen-avatars", help="Regenera portadas de personas desde caras/sugerencias")
+    sp.set_defaults(func=cmd_regen_avatars)
 
     return p
 

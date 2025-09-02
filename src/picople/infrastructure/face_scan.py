@@ -15,7 +15,7 @@ try:
 except Exception:
     _CV2_OK = False
 
-# Pillow para lectura robusta (rutas Unicode) y EXIF
+# Pillow para lectura robusta (rutas Unicode/EXIF)
 from PIL import Image, ImageOps
 import numpy as np
 
@@ -62,10 +62,8 @@ class FaceScanWorker(QObject):
     def _read_image_rgb(self, path: str) -> Optional[np.ndarray]:
         try:
             im = Image.open(path)
-            im = ImageOps.exif_transpose(im)  # respeta orientación
-            im = im.convert("RGB")
-            arr = np.array(im)  # RGB
-            return arr
+            im = ImageOps.exif_transpose(im).convert("RGB")
+            return np.array(im)  # RGB
         except Exception as e:
             log("FaceScanWorker: _read_image_rgb fallo:", path, e)
             return None
@@ -76,7 +74,6 @@ class FaceScanWorker(QObject):
         arr = np.array(g, dtype=np.float32)
         mean = float(arr.mean())
         bits = (arr > mean).flatten()
-        # 64 bits -> 16 hex
         val = 0
         for b in bits:
             val = (val << 1) | int(bool(b))
@@ -90,7 +87,6 @@ class FaceScanWorker(QObject):
             log("FaceScanWorker: no se pudo leer imagen:", img_path)
             return []
 
-        # Opcional: downscale para acelerar (máx 1600px lado largo)
         h, w, _ = rgb.shape
         max_side = max(h, w)
         scale = 1.0
@@ -103,8 +99,7 @@ class FaceScanWorker(QObject):
 
         gray = cv2.cvtColor(rgb_small, cv2.COLOR_RGB2GRAY)
         faces = self._detector.detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=5, minSize=(32, 32)
-        )
+            gray, scaleFactor=1.1, minNeighbors=5, minSize=(32, 32))
         out: List[Tuple[int, int, int, int]] = []
         if scale != 1.0:
             inv = 1.0 / scale
@@ -123,7 +118,6 @@ class FaceScanWorker(QObject):
 
         W, H = im.size
         x, y, w, h = bbox_xywh
-        # clamp + recorte seguro
         x = max(0, min(x, W-1))
         y = max(0, min(y, H-1))
         w = max(1, min(w, W - x))
@@ -176,8 +170,7 @@ class FaceScanWorker(QObject):
             path = item["path"]
             mid = item["media_id"]
             thumb = item.get("thumb_path") or path
-            # detecta en thumb si existe (más rápido y sin problemas Unicode)
-            detect_from = thumb
+            detect_from = thumb  # preferimos thumb (coordenadas consistentes)
             log(f"FaceScanWorker.run: [{i}/{total}] analizando", detect_from)
 
             try:
@@ -200,22 +193,23 @@ class FaceScanWorker(QObject):
                     # persona por firma (agrupado aproximado)
                     try:
                         pid = self.store.upsert_person_for_sig(
-                            sig, cover_hint=thumb)
+                            sig, cover_hint=None)
                     except Exception:
-                        # fallback por si algo falla
-                        pid = self.store.create_person(
-                            display_name=None, is_pet=False, cover_path=None, rep_sig=sig)
+                        pid = self.store.create_person(display_name=None, is_pet=False,
+                                                       cover_path=None, rep_sig=sig)
 
-                    # sugerencia y avatar (para que la grilla muestre zoom a la cara)
+                    # sugerencia
                     try:
                         self.store.add_suggestion(face_id, pid, score=q)
                     except Exception as e:
                         log("FaceScanWorker: add_suggestion fallo:", e)
 
-                    # generar avatar ahora mismo (recorte cuadrado al rostro)
+                    # generar avatar (recorte cuadrado al rostro) -> portada visible en la grilla
                     try:
-                        self.store.make_avatar_from_face(
+                        avatar = self.store.make_avatar_from_face(
                             pid, face_id, out_size=256, pad_ratio=0.25)
+                        log("FaceScanWorker: avatar", "OK" if avatar else "FAIL",
+                            "pid=", pid, "face=", face_id, "->", avatar or "")
                     except Exception as e:
                         log("FaceScanWorker: make_avatar_from_face fallo:", e)
 
