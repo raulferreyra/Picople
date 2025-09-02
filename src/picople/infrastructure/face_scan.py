@@ -8,43 +8,16 @@ from picople.core.log import log
 from picople.infrastructure.db import Database
 from picople.infrastructure.people_store import PeopleStore
 
+# Detector pluggable (OpenCV si está disponible)
 try:
     import cv2  # type: ignore
-    import numpy as np  # type: ignore
     _CV2_OK = True
 except Exception:
     _CV2_OK = False
 
-
-def _imread_unicode(path: str):
-    """
-    cv2.imread a veces falla con rutas Unicode en Windows. Esta variante usa
-    np.fromfile + imdecode.
-    """
-    try:
-        data = np.fromfile(path, dtype=np.uint8)  # type: ignore
-        if data.size == 0:
-            return None
-        return cv2.imdecode(data, cv2.IMREAD_COLOR)  # type: ignore
-    except Exception:
-        return None
-
-
-def _ahash_hex(img_gray_roi) -> Optional[str]:
-    """
-    Average hash (8x8 → 64 bits) en hex. ROI ya en escala de grises.
-    """
-    try:
-        small = cv2.resize(img_gray_roi, (8, 8),
-                           interpolation=cv2.INTER_AREA)  # type: ignore
-        m = small.mean()
-        bits = (small > m).astype(np.uint8).flatten()  # type: ignore
-        val = 0
-        for b in bits:
-            val = (val << 1) | int(b)
-        return f"{val:016x}"
-    except Exception:
-        return None
+# Pillow para lectura robusta (rutas Unicode) y EXIF
+from PIL import Image, ImageOps
+import numpy as np
 
 
 class FaceScanWorker(QObject):
@@ -62,13 +35,15 @@ class FaceScanWorker(QObject):
         self.store: Optional[PeopleStore] = None
         self._cancel = False
 
+        # Carga detector si hay OpenCV; si no, queda como no-op
         self._detector = None
         log("FaceScanWorker: OpenCV disponible:", _CV2_OK)
         if _CV2_OK:
             try:
                 cascade_path = getattr(cv2.data, "haarcascades", "")
                 cascade = cv2.CascadeClassifier(
-                    cascade_path + "haarcascade_frontalface_default.xml")  # type: ignore
+                    cascade_path + "haarcascade_frontalface_default.xml"
+                )
                 if not cascade.empty():
                     self._detector = cascade
                     log("FaceScanWorker: cascade cargado OK")
@@ -83,13 +58,81 @@ class FaceScanWorker(QObject):
         self._cancel = True
         log("FaceScanWorker: cancel solicitado")
 
-    def _detect_faces(self, img_bgr) -> List[Tuple[int, int, int, int]]:
-        if not self._detector or img_bgr is None:
+    # ---------- Lectura robusta (Pillow + EXIF) ----------
+    def _read_image_rgb(self, path: str) -> Optional[np.ndarray]:
+        try:
+            im = Image.open(path)
+            im = ImageOps.exif_transpose(im)  # respeta orientación
+            im = im.convert("RGB")
+            arr = np.array(im)  # RGB
+            return arr
+        except Exception as e:
+            log("FaceScanWorker: _read_image_rgb fallo:", path, e)
+            return None
+
+    # ---------- Hash perceptual simple (aHash 8x8) ----------
+    def _ahash_hex_from_crop(self, img: Image.Image) -> str:
+        g = img.convert("L").resize((8, 8), Image.LANCZOS)
+        arr = np.array(g, dtype=np.float32)
+        mean = float(arr.mean())
+        bits = (arr > mean).flatten()
+        # 64 bits -> 16 hex
+        val = 0
+        for b in bits:
+            val = (val << 1) | int(bool(b))
+        return f"{val:016x}"
+
+    def _detect_faces(self, img_path: str) -> List[Tuple[int, int, int, int]]:
+        if not self._detector:
             return []
-        gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)  # type: ignore
+        rgb = self._read_image_rgb(img_path)
+        if rgb is None:
+            log("FaceScanWorker: no se pudo leer imagen:", img_path)
+            return []
+
+        # Opcional: downscale para acelerar (máx 1600px lado largo)
+        h, w, _ = rgb.shape
+        max_side = max(h, w)
+        scale = 1.0
+        if max_side > 1600:
+            scale = 1600.0 / float(max_side)
+            rgb_small = cv2.resize(
+                rgb, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_AREA)
+        else:
+            rgb_small = rgb
+
+        gray = cv2.cvtColor(rgb_small, cv2.COLOR_RGB2GRAY)
         faces = self._detector.detectMultiScale(
-            gray, scaleFactor=1.08, minNeighbors=5, minSize=(32, 32))
-        return [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in faces], gray
+            gray, scaleFactor=1.1, minNeighbors=5, minSize=(32, 32)
+        )
+        out: List[Tuple[int, int, int, int]] = []
+        if scale != 1.0:
+            inv = 1.0 / scale
+            for (x, y, fw, fh) in faces:
+                out.append((int(x*inv), int(y*inv), int(fw*inv), int(fh*inv)))
+        else:
+            out = [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in faces]
+        return out
+
+    def _face_sig_on_path(self, img_path: str, bbox_xywh: Tuple[int, int, int, int]) -> Optional[str]:
+        try:
+            im = Image.open(img_path)
+            im = ImageOps.exif_transpose(im).convert("RGB")
+        except Exception:
+            return None
+
+        W, H = im.size
+        x, y, w, h = bbox_xywh
+        # clamp + recorte seguro
+        x = max(0, min(x, W-1))
+        y = max(0, min(y, H-1))
+        w = max(1, min(w, W - x))
+        h = max(1, min(h, H - y))
+        crop = im.crop((x, y, x + w, y + h))
+        try:
+            return self._ahash_hex_from_crop(crop)
+        except Exception:
+            return None
 
     def run(self):
         # 1) abrir DB en el hilo del worker
@@ -133,41 +176,50 @@ class FaceScanWorker(QObject):
             path = item["path"]
             mid = item["media_id"]
             thumb = item.get("thumb_path") or path
-            log(f"FaceScanWorker.run: [{i}/{total}] analizando", path)
+            # detecta en thumb si existe (más rápido y sin problemas Unicode)
+            detect_from = thumb
+            log(f"FaceScanWorker.run: [{i}/{total}] analizando", detect_from)
 
             try:
-                img = _imread_unicode(path) if _CV2_OK else None
-                if img is None:
-                    log("FaceScanWorker: no se pudo leer imagen:", path)
-                    self.store.mark_media_scanned(mid, item["mtime"])
-                    self.progress.emit(i, total, path)
-                    continue
-
-                boxes, gray = self._detect_faces(img)
+                boxes = self._detect_faces(detect_from)
                 log(f"FaceScanWorker.run: [{i}/{total}] caras detectadas =", len(boxes))
-
-                boxes = self._detect_faces(path)
                 for (x, y, w, h) in boxes:
                     q = float(w * h)
                     face_id = self.store.add_face_by_media_id(
                         mid, (x, y, w, h), embedding=None, quality=q
                     )
 
-                    # Persona sin nombre (sin cover inicial)
-                    pid = self.store.create_person(
-                        display_name=None, is_pet=False, cover_path=None)
+                    # firma para agrupar
+                    sig = self._face_sig_on_path(detect_from, (x, y, w, h))
+                    if sig:
+                        try:
+                            self.store.set_face_sig(face_id, sig)
+                        except Exception as e:
+                            log("FaceScanWorker: set_face_sig fallo:", e)
 
-                    # Sugerencia a esa persona
-                    self.store.add_suggestion(face_id, pid, score=q)
-
-                    # ✨ Generar avatar recortado desde el bbox y dejarlo como cover
+                    # persona por firma (agrupado aproximado)
                     try:
-                        self.store.make_avatar_from_face(pid, face_id)
+                        pid = self.store.upsert_person_for_sig(
+                            sig, cover_hint=thumb)
                     except Exception:
-                        pass
+                        # fallback por si algo falla
+                        pid = self.store.create_person(
+                            display_name=None, is_pet=False, cover_path=None, rep_sig=sig)
+
+                    # sugerencia y avatar (para que la grilla muestre zoom a la cara)
+                    try:
+                        self.store.add_suggestion(face_id, pid, score=q)
+                    except Exception as e:
+                        log("FaceScanWorker: add_suggestion fallo:", e)
+
+                    # generar avatar ahora mismo (recorte cuadrado al rostro)
+                    try:
+                        self.store.make_avatar_from_face(
+                            pid, face_id, out_size=256, pad_ratio=0.25)
+                    except Exception as e:
+                        log("FaceScanWorker: make_avatar_from_face fallo:", e)
 
                 faces_total += len(boxes)
-                # marcar media como escaneada
                 self.store.mark_media_scanned(mid, item["mtime"])
                 self.progress.emit(i, total, path)
             except Exception as e:
