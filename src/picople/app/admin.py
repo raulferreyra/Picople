@@ -35,7 +35,7 @@ def _open_db_and_migrate(pw: str) -> Database:
     db_path = app_data_dir() / "db" / "picople.db"
     db = Database(db_path)
     db.open(pw)
-    # Inicializa/migra esquema de personas/caras si hiciera falta
+    # asegura/migra esquema de personas/caras
     try:
         PeopleStore(db)  # dispara _ensure_schema()
     except Exception as e:
@@ -54,7 +54,6 @@ def cmd_wipe_people(args) -> int:
 
     log("Vaciando datos de Personas/Caras/Sugerencias…")
     conn.execute("BEGIN;")
-    # el orden importa por FKs
     for t in ("person_face", "face_suggestions", "faces",
               "person_alias", "persons", "face_scan_state"):
         _delete_all(conn, t)
@@ -90,22 +89,53 @@ def cmd_wipe_faces_cache(args) -> int:
 
 
 def cmd_wipe_all(args) -> int:
-    # Limpia tablas de personas/caras y cachés asociadas
     rc1 = cmd_wipe_people(argparse.Namespace(
         vacuum=getattr(args, "vacuum", False)))
     rc2 = cmd_wipe_faces_cache(args)
     return rc1 or rc2
 
 
-def cmd_regen_avatars(args) -> int:
-    """Regenera portadas para todas las personas usando sugerencias/caras."""
+def cmd_reset_covers(args) -> int:
+    """Limpia cover_path de todas las personas (para forzar re‐generación)."""
     pw = _prompt_key()
     db = _open_db_and_migrate(pw)
     try:
+        db.conn.execute("UPDATE persons SET cover_path=NULL;")
+        db.conn.commit()
+        print("[covers] cover_path limpiado en todas las personas")
+        return 0
+    finally:
+        try:
+            db.conn.close()
+        except Exception:
+            pass
+
+
+def cmd_regen_avatars(args) -> int:
+    """
+    Regenera portadas de personas desde sugerencias/caras.
+    - --force       : primero limpia cover_path (como reset-covers)
+    - --wipe-cache  : borra carpeta de avatars antes de regenerar
+    """
+    pw = _prompt_key()
+    if getattr(args, "wipe_cache", False):
+        avatars_dir = app_data_dir() / "avatars"
+        if avatars_dir.exists():
+            rmtree(avatars_dir, ignore_errors=True)
+            log("Avatars cache borrada:", avatars_dir)
+
+    db = _open_db_and_migrate(pw)
+    try:
+        if getattr(args, "force", False):
+            db.conn.execute("UPDATE persons SET cover_path=NULL;")
+            db.conn.commit()
+            print("[covers] cover_path limpiado (--force)")
+
         store = PeopleStore(db)
         cur = db.conn.cursor()
         cur.execute("SELECT id FROM persons;")
         for (pid,) in cur.fetchall():
+            # intenta con sugerencias; si no hay, usa una cara confirmada
             path = store.ensure_cover_if_missing(
                 pid) or store.generate_cover_for_person(pid)
             if path:
@@ -127,8 +157,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="picople-admin", description="Utilidades de mantenimiento Picople")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    wpp = sub.add_parser(
-        "wipe-people", help="Borra personas/caras/sugerencias y estado de escaneo")
+    wpp = sub.add_parser("wipe-people",
+                         help="Borra personas/caras/sugerencias y estado de escaneo")
     wpp.add_argument("--vacuum", action="store_true",
                      help="Compactar la base tras borrar")
     wpp.set_defaults(func=cmd_wipe_people)
@@ -137,13 +167,22 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Borra cachés de recortes de rostro/avatars")
     wfc.set_defaults(func=cmd_wipe_faces_cache)
 
-    wall = sub.add_parser("wipe-all", help="Wipe people + cachés de rostros")
+    wall = sub.add_parser("wipe-all",
+                          help="Wipe people + cachés de rostros")
     wall.add_argument("--vacuum", action="store_true",
                       help="Compactar la base tras borrar")
     wall.set_defaults(func=cmd_wipe_all)
 
-    sp = sub.add_parser(
-        "regen-avatars", help="Regenera portadas de personas desde caras/sugerencias")
+    rc = sub.add_parser("reset-covers",
+                        help="Pone cover_path = NULL en todas las personas")
+    rc.set_defaults(func=cmd_reset_covers)
+
+    sp = sub.add_parser("regen-avatars",
+                        help="Regenera portadas de personas desde caras/sugerencias")
+    sp.add_argument("--force", action="store_true",
+                    help="Limpiar cover_path antes de regenerar")
+    sp.add_argument("--wipe-cache", action="store_true",
+                    help="Borrar carpeta de avatars antes de regenerar")
     sp.set_defaults(func=cmd_regen_avatars)
 
     return p
