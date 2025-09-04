@@ -82,37 +82,53 @@ class FaceScanWorker(QObject):
     def _detect_faces(self, img_path: str) -> List[Tuple[int, int, int, int]]:
         if not self._detector:
             return []
+
         rgb = self._read_image_rgb(img_path)
         if rgb is None:
             log("FaceScanWorker: no se pudo leer imagen:", img_path)
             return []
 
-        # Downscale para acelerar (máx 1600px lado largo)
         h, w, _ = rgb.shape
-        max_side = max(h, w)
-        scale = 1.0
-        if max_side > 1600:
-            scale = 1600.0 / float(max_side)
-            rgb_small = cv2.resize(
-                rgb, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA
-            )
-        else:
-            rgb_small = rgb
 
-        gray = cv2.cvtColor(rgb_small, cv2.COLOR_RGB2GRAY)
-        faces = self._detector.detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=5, minSize=(32, 32)
-        )
+        # Si la imagen es pequeña, la ampliamos para que las caras superen minSize
+        upscale = 1.0
+        if max(h, w) < 800:
+            upscale = 800.0 / float(max(h, w))
+            rgb = cv2.resize(rgb, (int(w*upscale), int(h*upscale)),
+                             interpolation=cv2.INTER_CUBIC)
+            h, w, _ = rgb.shape
 
-        out: List[Tuple[int, int, int, int]] = []
-        if scale != 1.0:
-            inv = 1.0 / scale
-            for (x, y, fw, fh) in faces:
-                out.append((int(x * inv), int(y * inv),
-                           int(fw * inv), int(fh * inv)))
-        else:
-            out = [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in faces]
-        return out
+        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+
+        # minSize dinámico (8% del lado corto, acotado)
+        min_side = int(max(16, min(80, 0.08 * min(h, w))))
+
+        # Probaremos varios settings y, si están disponibles, otro cascade
+        cascades = [self._detector]
+        try:
+            alt = cv2.CascadeClassifier(
+                getattr(cv2.data, "haarcascades", "") + "haarcascade_frontalface_alt2.xml")
+            if not alt.empty():
+                cascades.append(alt)
+        except Exception:
+            pass
+
+        for cas in cascades:
+            for (sf, mn, ms) in (
+                (1.05, 3, min_side),
+                (1.10, 3, max(16, int(min_side*0.8))),
+                (1.15, 2, max(16, int(min_side*0.6))),
+            ):
+                faces = cas.detectMultiScale(
+                    gray, scaleFactor=sf, minNeighbors=mn, minSize=(ms, ms))
+                if len(faces):
+                    # Deshacer el upscale si lo hubo
+                    if upscale != 1.0:
+                        inv = 1.0 / upscale
+                        return [(int(x*inv), int(y*inv), int(w*inv), int(h*inv)) for (x, y, w, h) in faces]
+                    return [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in faces]
+
+        return []
 
     def _face_sig_on_path(self, img_path: str, bbox_xywh: Tuple[int, int, int, int]) -> Optional[str]:
         try:
@@ -175,22 +191,28 @@ class FaceScanWorker(QObject):
 
             path = item["path"]
             mid = item["media_id"]
-            detect_from = item.get("thumb_path") or path
+            thumb = item.get("thumb_path") or ""
+            detect_from = thumb or path
             log(f"FaceScanWorker.run: [{i}/{total}] analizando", detect_from)
 
             try:
                 boxes = self._detect_faces(detect_from)
+
+                # Fallback: si en el thumbnail no detecta nada, intenta en el original
+                if not boxes and thumb and Path(path).exists():
+                    log(
+                        f"FaceScanWorker.run: [{i}/{total}] 0 caras en thumb, probando original")
+                    boxes = self._detect_faces(path)
+
                 log(f"FaceScanWorker.run: [{i}/{total}] caras detectadas =", len(boxes))
 
                 for (x, y, w, h) in boxes:
                     q = float(w * h)
 
-                    # guardar bbox (coordenadas respecto a la imagen donde detectamos)
                     face_id = self.store.add_face_by_media_id(
                         mid, (x, y, w, h), embedding=None, quality=q
                     )
 
-                    # firma para agrupar
                     sig = self._face_sig_on_path(detect_from, (x, y, w, h))
                     if sig:
                         try:
@@ -198,7 +220,6 @@ class FaceScanWorker(QObject):
                         except Exception as e:
                             log("FaceScanWorker: set_face_sig fallo:", e)
 
-                    # crear/recuperar persona por firma
                     try:
                         pid = self.store.upsert_person_for_sig(
                             sig, cover_hint=None)
@@ -207,13 +228,11 @@ class FaceScanWorker(QObject):
                             display_name=None, is_pet=False, cover_path=None, rep_sig=sig
                         )
 
-                    # sugerencia
                     try:
                         self.store.add_suggestion(face_id, pid, score=q)
                     except Exception as e:
                         log("FaceScanWorker: add_suggestion fallo:", e)
 
-                    # avatar recortado (zoom a la cara)
                     try:
                         avatar = self.store.make_avatar_from_face(
                             pid, face_id, out_size=256, pad_ratio=0.25
