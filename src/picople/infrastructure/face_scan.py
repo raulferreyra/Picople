@@ -146,7 +146,7 @@ class FaceScanWorker(QObject):
             self.finished.emit({"scanned": 0, "faces": 0})
             return
 
-        # 2) lote
+        # 2) obtener lote de medios pendientes
         try:
             batch = self.store.get_unscanned_media(batch=48)
         except Exception as e:
@@ -175,7 +175,6 @@ class FaceScanWorker(QObject):
 
             path = item["path"]
             mid = item["media_id"]
-            # coordenadas en la imagen usada
             detect_from = item.get("thumb_path") or path
             log(f"FaceScanWorker.run: [{i}/{total}] analizando", detect_from)
 
@@ -185,12 +184,13 @@ class FaceScanWorker(QObject):
 
                 for (x, y, w, h) in boxes:
                     q = float(w * h)
-                    # Guardamos bbox respecto a la imagen usada para detectar
+
+                    # guardar bbox (coordenadas respecto a la imagen donde detectamos)
                     face_id = self.store.add_face_by_media_id(
                         mid, (x, y, w, h), embedding=None, quality=q
                     )
 
-                    # Firma para agrupar
+                    # firma para agrupar
                     sig = self._face_sig_on_path(detect_from, (x, y, w, h))
                     if sig:
                         try:
@@ -198,7 +198,7 @@ class FaceScanWorker(QObject):
                         except Exception as e:
                             log("FaceScanWorker: set_face_sig fallo:", e)
 
-                    # Persona (agrupado por firma)
+                    # crear/recuperar persona por firma
                     try:
                         pid = self.store.upsert_person_for_sig(
                             sig, cover_hint=None)
@@ -207,24 +207,19 @@ class FaceScanWorker(QObject):
                             display_name=None, is_pet=False, cover_path=None, rep_sig=sig
                         )
 
-                    # Sugerencia
+                    # sugerencia
                     try:
                         self.store.add_suggestion(face_id, pid, score=q)
                     except Exception as e:
                         log("FaceScanWorker: add_suggestion fallo:", e)
 
-                    # Avatar/portada (recorte de rostro)
+                    # avatar recortado (zoom a la cara)
                     try:
                         avatar = self.store.make_avatar_from_face(
                             pid, face_id, out_size=256, pad_ratio=0.25
                         )
-                        log(
-                            "FaceScanWorker: avatar",
-                            "OK" if avatar else "FAIL",
-                            "pid=", pid,
-                            "face=", face_id,
-                            "->", avatar or "",
-                        )
+                        log("FaceScanWorker: avatar", "OK" if avatar else "FAIL",
+                            "pid=", pid, "face=", face_id, "->", avatar or "")
                     except Exception as e:
                         log("FaceScanWorker: make_avatar_from_face fallo:", e)
 

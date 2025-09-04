@@ -470,3 +470,35 @@ class PeopleStore:
             WHERE face_id=? AND person_id=?;
         """, (face_id, person_id))
         self._conn.commit()
+
+        # ------------------------------------------------------------------ #
+    # Escaneo incremental
+    # ------------------------------------------------------------------ #
+    def get_unscanned_media(self, *, batch: int = 48) -> List[Dict[str, Any]]:
+        cur = self._conn.cursor()
+        cur.execute("""
+            SELECT m.id AS media_id, m.path, m.mtime, m.thumb_path
+            FROM media m
+            LEFT JOIN face_scan_state s ON s.media_id = m.id
+            WHERE s.media_id IS NULL OR s.last_mtime < m.mtime
+            ORDER BY COALESCE(s.last_ts, 0) ASC, m.mtime DESC
+            LIMIT ?;
+        """, (int(batch),))
+        rows = cur.fetchall()
+        return [{
+            "media_id": int(r[0]),
+            "path": r[1],
+            "mtime": int(r[2]),
+            "thumb_path": r[3],
+        } for r in rows]
+
+    def mark_media_scanned(self, media_id: int, mtime: int) -> None:
+        cur = self._conn.cursor()
+        cur.execute("""
+            INSERT INTO face_scan_state(media_id, last_mtime, last_ts)
+            VALUES(?, ?, ?)
+            ON CONFLICT(media_id) DO UPDATE SET
+                last_mtime=excluded.last_mtime,
+                last_ts=excluded.last_ts;
+        """, (media_id, int(mtime), self._now()))
+        self._conn.commit()
