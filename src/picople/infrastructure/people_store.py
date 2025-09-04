@@ -1,9 +1,9 @@
 from __future__ import annotations
 from typing import Optional, Tuple, List, Dict, Any
-from pathlib import Path
 
 import sqlite3
 import time
+from pathlib import Path
 
 from picople.infrastructure.db import Database
 from picople.core.paths import app_data_dir
@@ -12,10 +12,9 @@ from picople.infrastructure.people_avatars import PeopleAvatarService
 
 class PeopleStore:
     """
-    Acceso y utilidades para Personas/Mascotas, Caras y Sugerencias.
-    Incluye:
+    Personas/Mascotas, Caras y Sugerencias:
       • Agrupado por firma (aHash) de rostro (faces.sig / persons.rep_sig)
-      • Portadas recortadas al rostro (cover_path generado desde bbox)
+      • Portadas recortadas al rostro
     """
 
     def __init__(self, db: Database) -> None:
@@ -25,20 +24,17 @@ class PeopleStore:
         self._conn: sqlite3.Connection = db.conn  # type: ignore
         self._ensure_schema()
 
-    # ------------------------------------------------------------------ #
-    # Esquema y migraciones
-    # ------------------------------------------------------------------ #
+    # ───────────────────────── Esquema ─────────────────────────
     def _ensure_schema(self) -> None:
         cur = self._conn.cursor()
 
-        # Personas
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS persons (
+            CREATE TABLE IF NOT EXISTS persons(
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 display_name TEXT,
                 is_pet       INTEGER NOT NULL DEFAULT 0,
                 cover_path   TEXT,
-                rep_sig      TEXT,                     -- firma representativa
+                rep_sig      TEXT,
                 created_at   INTEGER NOT NULL,
                 updated_at   INTEGER NOT NULL
             );
@@ -46,11 +42,10 @@ class PeopleStore:
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_persons_is_pet ON persons(is_pet);")
         cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_persons_sig ON persons(rep_sig);")
+            "CREATE INDEX IF NOT EXISTS idx_persons_sig   ON persons(rep_sig);")
 
-        # Alias
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS person_alias (
+            CREATE TABLE IF NOT EXISTS person_alias(
                 id        INTEGER PRIMARY KEY AUTOINCREMENT,
                 person_id INTEGER NOT NULL,
                 alias     TEXT NOT NULL,
@@ -59,9 +54,8 @@ class PeopleStore:
             );
         """)
 
-        # Caras
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS faces (
+            CREATE TABLE IF NOT EXISTS faces(
                 id        INTEGER PRIMARY KEY AUTOINCREMENT,
                 media_id  INTEGER NOT NULL,
                 x         REAL NOT NULL,
@@ -70,7 +64,7 @@ class PeopleStore:
                 h         REAL NOT NULL,
                 embedding BLOB,
                 quality   REAL,
-                sig       TEXT,                        -- aHash del rostro
+                sig       TEXT,
                 ts        INTEGER NOT NULL DEFAULT (strftime('%s','now')),
                 is_hidden INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY(media_id) REFERENCES media(id) ON DELETE CASCADE
@@ -85,9 +79,8 @@ class PeopleStore:
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_faces_sig     ON faces(sig);")
 
-        # Relación confirmada
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS person_face (
+            CREATE TABLE IF NOT EXISTS person_face(
                 person_id INTEGER NOT NULL,
                 face_id   INTEGER NOT NULL UNIQUE,
                 PRIMARY KEY(person_id, face_id),
@@ -98,9 +91,8 @@ class PeopleStore:
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_person_face_person ON person_face(person_id);")
 
-        # Sugerencias
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS face_suggestions (
+            CREATE TABLE IF NOT EXISTS face_suggestions(
                 face_id   INTEGER NOT NULL,
                 person_id INTEGER NOT NULL,
                 score     REAL,
@@ -115,9 +107,8 @@ class PeopleStore:
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_face_sug_state  ON face_suggestions(state);")
 
-        # Estado de escaneo
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS face_scan_state (
+            CREATE TABLE IF NOT EXISTS face_scan_state(
                 media_id   INTEGER PRIMARY KEY,
                 last_mtime INTEGER NOT NULL,
                 last_ts    INTEGER NOT NULL,
@@ -129,9 +120,7 @@ class PeopleStore:
 
         self._conn.commit()
 
-    # ------------------------------------------------------------------ #
-    # Helpers
-    # ------------------------------------------------------------------ #
+    # ───────────────────────── Helpers ─────────────────────────
     def _now(self) -> int:
         return int(time.time())
 
@@ -148,7 +137,7 @@ class PeopleStore:
         except Exception:
             return 64
 
-    # ---------- Avatares (recorte de rostro) ----------
+    # ─────────────── Avatares (recorte de rostro) ───────────────
     def _avatar_out_path(self, person_id: int) -> str:
         out = app_data_dir() / "avatars" / f"person_{person_id}.jpg"
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -156,6 +145,10 @@ class PeopleStore:
 
     def make_avatar_from_face(self, person_id: int, face_id: int,
                               *, out_size: int = 256, pad_ratio: float = 0.25) -> Optional[str]:
+        """
+        Recorta la cara indicada y guarda como portada de la persona.
+        Devuelve la ruta generada o None.
+        """
         cur = self._conn.cursor()
         cur.execute("""
             SELECT m.thumb_path, m.path, f.x, f.y, f.w, f.h
@@ -167,13 +160,14 @@ class PeopleStore:
         if not row:
             return None
 
-        # preferimos thumb (mismo espacio de coords)
+        # Usamos la misma imagen con la que se detectó (coordenadas consistentes)
         src_path = row[0] or row[1]
         bbox = (float(row[2]), float(row[3]), float(row[4]), float(row[5]))
         out_path = self._avatar_out_path(person_id)
 
-        path = PeopleAvatarService.crop_face_square(src_path, bbox, out_path=out_path,
-                                                    out_size=out_size, pad_ratio=pad_ratio)
+        path = PeopleAvatarService.crop_face_square(
+            src_path, bbox, out_path=out_path, out_size=out_size, pad_ratio=pad_ratio
+        )
         if path:
             self.set_person_cover(person_id, path)
             return path
@@ -186,7 +180,7 @@ class PeopleStore:
         if row and row[0]:
             return row[0]
 
-        # 1) Mejor sugerencia
+        # 1) mejor sugerencia
         cur.execute("""
             SELECT face_id
             FROM face_suggestions
@@ -200,7 +194,7 @@ class PeopleStore:
             if path:
                 return path
 
-        # 2) Una cara confirmada
+        # 2) una cara confirmada
         cur.execute("""
             SELECT face_id
             FROM person_face
@@ -216,9 +210,7 @@ class PeopleStore:
 
         return None
 
-    # ------------------------------------------------------------------ #
-    # Personas (clusters)
-    # ------------------------------------------------------------------ #
+    # ───────────────────────── Personas ─────────────────────────
     def create_person(self, display_name: Optional[str] = None, *,
                       is_pet: bool = False, cover_path: Optional[str] = None,
                       rep_sig: Optional[str] = None) -> int:
@@ -232,6 +224,7 @@ class PeopleStore:
         return int(cur.lastrowid)
 
     def set_person_name(self, person_id: int, name: Optional[str]) -> None:
+        cur = self._conn.cursor
         cur = self._conn.cursor()
         cur.execute("UPDATE persons SET display_name=?, updated_at=? WHERE id=?;",
                     (name, self._now(), person_id))
@@ -262,13 +255,13 @@ class PeopleStore:
         )
         self._conn.commit()
 
-    # Agrupado por firma -------------------------------------------------- #
+    # ───────────── Agrupado por firma (aHash) ─────────────
     def set_face_sig(self, face_id: int, sig: str) -> None:
         cur = self._conn.cursor()
         cur.execute("UPDATE faces SET sig=? WHERE id=?;", (sig, face_id))
         self._conn.commit()
 
-    def find_person_by_sig(self, sig: Optional[str], max_dist: int = 7) -> Optional[int]:
+    def find_person_by_sig(self, sig: Optional[str], max_dist: int = 12) -> Optional[int]:
         if not sig:
             return None
         cur = self._conn.cursor()
@@ -286,8 +279,7 @@ class PeopleStore:
         pid = self.find_person_by_sig(sig)
         if pid is not None:
             return pid
-        return self.create_person(display_name=None, is_pet=False,
-                                  cover_path=cover_hint, rep_sig=sig)
+        return self.create_person(display_name=None, is_pet=False, cover_path=cover_hint, rep_sig=sig)
 
     def link_face_to_person(self, person_id: int, face_id: int) -> None:
         cur = self._conn.cursor()
@@ -295,7 +287,6 @@ class PeopleStore:
             INSERT INTO person_face(person_id, face_id) VALUES (?, ?)
             ON CONFLICT(face_id) DO UPDATE SET person_id=excluded.person_id;
         """, (person_id, face_id))
-        # y marca sugerencias como aceptadas/rechazadas si existían
         cur.execute("""
             UPDATE face_suggestions
                SET state = CASE
@@ -306,61 +297,10 @@ class PeopleStore:
         """, (person_id, face_id))
         self._conn.commit()
 
-    # Portadas desde rostro ---------------------------------------------- #
     def set_person_cover_from_face(self, person_id: int, face_id: int) -> Optional[str]:
         return self.make_avatar_from_face(person_id, face_id)
 
-    # Listas para UI ------------------------------------------------------ #
-    def list_persons_with_suggestion_counts(self, *, include_pets: bool = True) -> List[Dict[str, Any]]:
-        where = "" if include_pets else "WHERE p.is_pet=0"
-        cur = self._conn.cursor()
-        cur.execute(f"""
-            SELECT
-                p.id,
-                COALESCE(p.display_name, '(Sin nombre)') AS title,
-                p.is_pet,
-                p.cover_path,
-                COALESCE(SUM(CASE WHEN fs.state='pending' THEN 1 ELSE 0 END), 0) AS sug_count
-            FROM persons p
-            LEFT JOIN face_suggestions fs ON fs.person_id = p.id
-            {where}
-            GROUP BY p.id
-            ORDER BY title COLLATE NOCASE;
-        """)
-        rows = cur.fetchall()
-        out: List[Dict[str, Any]] = []
-        for r in rows:
-            pid = int(r[0])
-            cover = r[3]
-            if not cover:
-                try:
-                    cover = self.ensure_cover_if_missing(pid) or ""
-                except Exception:
-                    cover = cover or ""
-            out.append({
-                "id": pid,
-                "title": r[1],
-                "is_pet": bool(r[2]),
-                "cover": cover,
-                "suggestions_count": int(r[4] or 0)
-            })
-        return out
-
-    def generate_cover_for_person(self, person_id: int) -> Optional[str]:
-        cur = self._conn.cursor()
-        cur.execute("""
-            SELECT f.id
-            FROM person_face pf
-            JOIN faces f ON f.id = pf.face_id
-            WHERE pf.person_id = ?
-            ORDER BY COALESCE(f.quality, 0.0) DESC, f.ts DESC
-            LIMIT 1;
-        """, (person_id,))
-        row = cur.fetchone()
-        if not row:
-            return None
-        return self.make_avatar_from_face(person_id, int(row[0]))
-
+    # ───────────── Listados para UI ─────────────
     def list_person_media(self, person_id: int, *, limit: int = 200, offset: int = 0) -> List[Dict[str, Any]]:
         cur = self._conn.cursor()
         cur.execute("""
@@ -397,6 +337,41 @@ class PeopleStore:
             "score": float(r[3]),
         } for r in rows]
 
+    def list_persons_with_suggestion_counts(self, *, include_pets: bool = True) -> List[Dict[str, Any]]:
+        where = "" if include_pets else "WHERE p.is_pet=0"
+        cur = self._conn.cursor()
+        cur.execute(f"""
+            SELECT
+                p.id,
+                COALESCE(p.display_name, '(Sin nombre)') AS title,
+                p.is_pet,
+                p.cover_path,
+                COALESCE(SUM(CASE WHEN fs.state='pending' THEN 1 ELSE 0 END), 0) AS sug_count
+            FROM persons p
+            LEFT JOIN face_suggestions fs ON fs.person_id = p.id
+            {where}
+            GROUP BY p.id
+            ORDER BY title COLLATE NOCASE;
+        """)
+        rows = cur.fetchall()
+        out: List[Dict[str, Any]] = []
+        for r in rows:
+            pid = int(r[0])
+            cover = r[3] or ""
+            if not cover:
+                try:
+                    cover = self.ensure_cover_if_missing(pid) or ""
+                except Exception:
+                    pass
+            out.append({
+                "id": pid,
+                "title": r[1],
+                "is_pet": bool(r[2]),
+                "cover": cover,
+                "suggestions_count": int(r[4] or 0)
+            })
+        return out
+
     def list_persons_overview(self, *, include_zero: bool = False) -> List[Dict[str, Any]]:
         cur = self._conn.cursor()
         cur.execute("""
@@ -419,7 +394,8 @@ class PeopleStore:
             pid = int(r[0])
             photos = int(r[4] or 0)
             if not include_zero and photos == 0:
-                continue
+                # igual queremos avatar si hay sugerencias
+                pass
 
             cover = r[3] or ""
             try:
@@ -437,34 +413,60 @@ class PeopleStore:
             })
         return out
 
-    # ------------------------------------------------------------------ #
-    # Escaneo incremental
-    # ------------------------------------------------------------------ #
-    def get_unscanned_media(self, *, batch: int = 48) -> List[Dict[str, Any]]:
-        cur = self._conn.cursor()
-        cur.execute("""
-            SELECT m.id AS media_id, m.path, m.mtime, m.thumb_path
-            FROM media m
-            LEFT JOIN face_scan_state s ON s.media_id = m.id
-            WHERE s.media_id IS NULL OR s.last_mtime < m.mtime
-            ORDER BY COALESCE(s.last_ts, 0) ASC, m.mtime DESC
-            LIMIT ?;
-        """, (int(batch),))
-        rows = cur.fetchall()
-        return [{
-            "media_id": int(r[0]),
-            "path": r[1],
-            "mtime": int(r[2]),
-            "thumb_path": r[3],
-        } for r in rows]
+    # ───────────────────────── Escaneo ─────────────────────────
+    def add_face(self, media_path: str, bbox_xywh: Tuple[float, float, float, float],
+                 *, embedding: Optional[bytes] = None, quality: Optional[float] = None) -> Optional[int]:
+        mid = self._get_media_id_by_path(media_path)
+        if mid is None:
+            return None
+        return self.add_face_by_media_id(mid, bbox_xywh, embedding=embedding, quality=quality)
 
-    def mark_media_scanned(self, media_id: int, mtime: int) -> None:
+    def add_face_by_media_id(self, media_id: int, bbox_xywh: Tuple[float, float, float, float],
+                             *, embedding: Optional[bytes] = None, quality: Optional[float] = None) -> int:
+        x, y, w, h = bbox_xywh
         cur = self._conn.cursor()
         cur.execute("""
-            INSERT INTO face_scan_state(media_id, last_mtime, last_ts)
-            VALUES(?, ?, ?)
-            ON CONFLICT(media_id) DO UPDATE SET
-                last_mtime=excluded.last_mtime,
-                last_ts=excluded.last_ts;
-        """, (media_id, int(mtime), self._now()))
+            INSERT INTO faces(media_id, x, y, w, h, embedding, quality, ts, is_hidden)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0);
+        """, (media_id, x, y, w, h, embedding, quality, self._now()))
+        self._conn.commit()
+        return int(cur.lastrowid)
+
+    def delete_face(self, face_id: int) -> None:
+        cur = self._conn.cursor()
+        cur.execute("DELETE FROM faces WHERE id=?;", (face_id,))
+        self._conn.commit()
+
+    def hide_face(self, face_id: int, hidden: bool = True) -> None:
+        cur = self._conn.cursor()
+        cur.execute("UPDATE faces SET is_hidden=? WHERE id=?;",
+                    (1 if hidden else 0, face_id))
+        self._conn.commit()
+
+    def accept_suggestion(self, face_id: int, person_id: int) -> None:
+        cur = self._conn.cursor()
+        cur.execute("""
+            INSERT INTO person_face(person_id, face_id)
+            VALUES (?, ?)
+            ON CONFLICT(face_id) DO UPDATE SET person_id=excluded.person_id;
+        """, (person_id, face_id))
+        cur.execute("""
+            UPDATE face_suggestions
+               SET state = CASE
+                               WHEN person_id=? THEN 'accepted'
+                               ELSE 'rejected'
+                           END
+             WHERE face_id=?;
+        """, (person_id, face_id))
+        self._conn.commit()
+
+        self.ensure_cover_if_missing(person_id)
+        self.link_face_to_person(person_id, face_id)
+
+    def reject_suggestion(self, face_id: int, person_id: int) -> None:
+        cur = self._conn.cursor()
+        cur.execute("""
+            UPDATE face_suggestions SET state='rejected'
+            WHERE face_id=? AND person_id=?;
+        """, (face_id, person_id))
         self._conn.commit()

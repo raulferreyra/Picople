@@ -13,20 +13,22 @@ class PeopleAvatarService:
                          out_size: int = 256,
                          pad_ratio: float = 0.25) -> Optional[str]:
         """
-        Recorta la región del rostro (con padding) a un cuadrado out_size x out_size,
-        respetando orientación EXIF. Devuelve la ruta del archivo generado.
+        Recorta un cuadrado centrado en la cara (con padding), respeta EXIF y guarda JPEG.
+        Devuelve la ruta generada o None.
         """
         try:
             im = Image.open(src_path)
             im = ImageOps.exif_transpose(im).convert("RGB")
             W, H = im.size
             x, y, w, h = bbox_xywh
+
+            # clamp
             x = max(0, min(int(x), W - 1))
             y = max(0, min(int(y), H - 1))
             w = max(1, min(int(w), W - x))
             h = max(1, min(int(h), H - y))
 
-            # expandir a cuadrado con padding
+            # expandir a cuadrado
             cx, cy = x + w / 2.0, y + h / 2.0
             r = max(w, h) * (1.0 + pad_ratio) / 2.0
             left = int(max(0, cx - r))

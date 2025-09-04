@@ -8,14 +8,14 @@ from picople.core.log import log
 from picople.infrastructure.db import Database
 from picople.infrastructure.people_store import PeopleStore
 
-# Detector pluggable (OpenCV si está disponible)
+# Detector (OpenCV si disponible)
 try:
     import cv2  # type: ignore
     _CV2_OK = True
 except Exception:
     _CV2_OK = False
 
-# Pillow para lectura robusta (rutas Unicode/EXIF)
+# Lectura robusta y EXIF
 from PIL import Image, ImageOps
 import numpy as np
 
@@ -35,7 +35,7 @@ class FaceScanWorker(QObject):
         self.store: Optional[PeopleStore] = None
         self._cancel = False
 
-        # Carga detector si hay OpenCV; si no, queda como no-op
+        # Carga detector si hay OpenCV
         self._detector = None
         log("FaceScanWorker: OpenCV disponible:", _CV2_OK)
         if _CV2_OK:
@@ -87,24 +87,29 @@ class FaceScanWorker(QObject):
             log("FaceScanWorker: no se pudo leer imagen:", img_path)
             return []
 
+        # Downscale para acelerar (máx 1600px lado largo)
         h, w, _ = rgb.shape
         max_side = max(h, w)
         scale = 1.0
         if max_side > 1600:
             scale = 1600.0 / float(max_side)
             rgb_small = cv2.resize(
-                rgb, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_AREA)
+                rgb, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA
+            )
         else:
             rgb_small = rgb
 
         gray = cv2.cvtColor(rgb_small, cv2.COLOR_RGB2GRAY)
         faces = self._detector.detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=5, minSize=(32, 32))
+            gray, scaleFactor=1.1, minNeighbors=5, minSize=(32, 32)
+        )
+
         out: List[Tuple[int, int, int, int]] = []
         if scale != 1.0:
             inv = 1.0 / scale
             for (x, y, fw, fh) in faces:
-                out.append((int(x*inv), int(y*inv), int(fw*inv), int(fh*inv)))
+                out.append((int(x * inv), int(y * inv),
+                           int(fw * inv), int(fh * inv)))
         else:
             out = [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in faces]
         return out
@@ -118,8 +123,8 @@ class FaceScanWorker(QObject):
 
         W, H = im.size
         x, y, w, h = bbox_xywh
-        x = max(0, min(x, W-1))
-        y = max(0, min(y, H-1))
+        x = max(0, min(x, W - 1))
+        y = max(0, min(y, H - 1))
         w = max(1, min(w, W - x))
         h = max(1, min(h, H - y))
         crop = im.crop((x, y, x + w, y + h))
@@ -141,6 +146,7 @@ class FaceScanWorker(QObject):
             self.finished.emit({"scanned": 0, "faces": 0})
             return
 
+        # 2) lote
         try:
             batch = self.store.get_unscanned_media(batch=48)
         except Exception as e:
@@ -169,20 +175,22 @@ class FaceScanWorker(QObject):
 
             path = item["path"]
             mid = item["media_id"]
-            thumb = item.get("thumb_path") or path
-            detect_from = thumb  # preferimos thumb (coordenadas consistentes)
+            # coordenadas en la imagen usada
+            detect_from = item.get("thumb_path") or path
             log(f"FaceScanWorker.run: [{i}/{total}] analizando", detect_from)
 
             try:
                 boxes = self._detect_faces(detect_from)
                 log(f"FaceScanWorker.run: [{i}/{total}] caras detectadas =", len(boxes))
+
                 for (x, y, w, h) in boxes:
                     q = float(w * h)
+                    # Guardamos bbox respecto a la imagen usada para detectar
                     face_id = self.store.add_face_by_media_id(
                         mid, (x, y, w, h), embedding=None, quality=q
                     )
 
-                    # firma para agrupar
+                    # Firma para agrupar
                     sig = self._face_sig_on_path(detect_from, (x, y, w, h))
                     if sig:
                         try:
@@ -190,32 +198,40 @@ class FaceScanWorker(QObject):
                         except Exception as e:
                             log("FaceScanWorker: set_face_sig fallo:", e)
 
-                    # persona por firma (agrupado aproximado)
+                    # Persona (agrupado por firma)
                     try:
                         pid = self.store.upsert_person_for_sig(
                             sig, cover_hint=None)
                     except Exception:
-                        pid = self.store.create_person(display_name=None, is_pet=False,
-                                                       cover_path=None, rep_sig=sig)
+                        pid = self.store.create_person(
+                            display_name=None, is_pet=False, cover_path=None, rep_sig=sig
+                        )
 
-                    # sugerencia
+                    # Sugerencia
                     try:
                         self.store.add_suggestion(face_id, pid, score=q)
                     except Exception as e:
                         log("FaceScanWorker: add_suggestion fallo:", e)
 
-                    # generar avatar (recorte cuadrado al rostro) -> portada visible en la grilla
+                    # Avatar/portada (recorte de rostro)
                     try:
                         avatar = self.store.make_avatar_from_face(
-                            pid, face_id, out_size=256, pad_ratio=0.25)
-                        log("FaceScanWorker: avatar", "OK" if avatar else "FAIL",
-                            "pid=", pid, "face=", face_id, "->", avatar or "")
+                            pid, face_id, out_size=256, pad_ratio=0.25
+                        )
+                        log(
+                            "FaceScanWorker: avatar",
+                            "OK" if avatar else "FAIL",
+                            "pid=", pid,
+                            "face=", face_id,
+                            "->", avatar or "",
+                        )
                     except Exception as e:
                         log("FaceScanWorker: make_avatar_from_face fallo:", e)
 
                 faces_total += len(boxes)
                 self.store.mark_media_scanned(mid, item["mtime"])
                 self.progress.emit(i, total, path)
+
             except Exception as e:
                 log("FaceScanWorker.run: error en media:", path, "error:", e)
                 self.error.emit(path, str(e))
