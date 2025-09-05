@@ -3,7 +3,7 @@ from typing import Dict, Any, Optional, List
 
 from PySide6.QtCore import Qt, QSize, QModelIndex, QPoint, QTimer
 from PySide6.QtGui import (
-    QIcon, QPixmap, QPainter, QPainterPath, QStandardItem, QStandardItemModel
+    QIcon, QPixmap, QPainter, QPainterPath, QStandardItem, QStandardItemModel, QImageReader
 )
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListView, QStackedWidget, QToolButton,
@@ -21,7 +21,10 @@ TILE = 128
 
 class PeopleView(SectionView):
     """
-    Vista: Personas y mascotas (muestra clusters por SUGERENCIAS o fotos confirmadas).
+    Personas y mascotas:
+      • Lista: clusters (DB si disponible, mock si no)
+      • Detalle: PersonDetailView (Todos/Sugerencias) con botón “volver”
+      • Menú contextual en la lista: Renombrar / Mascota / Eliminar
     """
 
     def __init__(self, db: Optional[Database] = None):
@@ -41,15 +44,17 @@ class PeopleView(SectionView):
         self._page_list = QWidget(self)
         self._page_detail = QWidget(self)
 
+        self._clusters_mock: list[Dict[str, Any]] = self._mock_clusters()
         self._current_person_id: Optional[str] = None
 
         self._build_list_page()
         self._build_detail_page()
 
-        self.stack.addWidget(self._page_list)    # 0
-        self.stack.addWidget(self._page_detail)  # 1
+        self.stack.addWidget(self._page_list)    # idx 0
+        self.stack.addWidget(self._page_detail)  # idx 1
         self.content_layout.addWidget(self.stack, 1)
 
+        # Guard: si por cualquier cosa la lista queda vacía, reintenta cargar
         self._render_guard = QTimer(self)
         self._render_guard.setInterval(2000)
         self._render_guard.timeout.connect(self._render_guard_tick)
@@ -61,7 +66,7 @@ class PeopleView(SectionView):
         if self.stack.currentWidget() is self._page_list and self.model.rowCount() == 0:
             self._reload_list()
 
-    # ---------- List page ----------
+    # ───────────────────────── List page ─────────────────────────
     def _build_list_page(self) -> None:
         root = QVBoxLayout(self._page_list)
         root.setContentsMargins(0, 0, 0, 0)
@@ -77,45 +82,59 @@ class PeopleView(SectionView):
         self.list.setWordWrap(True)
         self.list.doubleClicked.connect(self._on_double_clicked)
 
+        # menú contextual
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._open_context_menu)
 
         self.model = QStandardItemModel(self.list)
         self.list.setModel(self.model)
 
-        # estado vacío
-        self.empty = QLabel("Aún no hay personas detectadas.\nPulsa “Actualizar” para iniciar el análisis.",
-                            self._page_list)
-        self.empty.setAlignment(Qt.AlignCenter)
-        self.empty.setStyleSheet("color: #aaa; padding: 40px;")
-
         root.addWidget(self.list, 1)
-        root.addWidget(self.empty, 1)
-        self.empty.hide()
 
-    def _circle_pixmap(self, path: str | None) -> QPixmap:
+    # ——— helpers de imagen ———
+    def _load_pixmap_fresh(self, path: str | None) -> QPixmap:
+        """Carga la imagen ignorando cachés del SO/Qt para ver cambios de disco."""
+        if not path:
+            pm = QPixmap(TILE, TILE)
+            pm.fill(Qt.darkGray)
+            return pm
+        reader = QImageReader(path)
+        reader.setAutoTransform(True)
+        img = reader.read()
+        if img.isNull():
+            pm = QPixmap(TILE, TILE)
+            pm.fill(Qt.darkGray)
+            return pm
+        return QPixmap.fromImage(img)
+
+    def _circular_pixmap(self, cover_path: str | None) -> QPixmap:
         size = TILE
-        src = QPixmap(path or "")
-        if src.isNull():
-            src = QPixmap(size, size)
-            src.fill(Qt.darkGray)
-        src = src.scaled(
+        base = self._load_pixmap_fresh(cover_path)
+        base = base.scaled(
             size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-        out = QPixmap(size, size)
-        out.fill(Qt.transparent)
-        p = QPainter(out)
-        p.setRenderHint(QPainter.Antialiasing, True)
-        mask = QPainterPath()
-        mask.addEllipse(0, 0, size, size)
-        p.setClipPath(mask)
-        p.drawPixmap(0, 0, src)
-        p.end()
-        return out
+        pm = QPixmap(size, size)
+        pm.fill(Qt.transparent)
+        painter = QPainter(pm)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        path = QPainterPath()
+        path.addEllipse(0, 0, size, size)
+        painter.setClipPath(path)
+        painter.drawPixmap(0, 0, base)
+        painter.end()
+        return pm
+
+    def _count_label(self, photos: int, sugs: int) -> str:
+        if photos > 0:
+            return f"{photos} foto{'s' if photos != 1 else ''}"
+        if sugs > 0:
+            return f"{sugs} sugerencia{'s' if sugs != 1 else ''}"
+        return "0 fotos"
 
     def _reload_list(self) -> None:
+        """Carga desde DB si hay store; si no, usa mock."""
         self.model.clear()
 
-        # Reintento perezoso
+        # Reintento perezoso: si no hay store pero la DB está abierta, reintenta
         if self.store is None and self.db and self.db.is_open:
             try:
                 self.store = PeopleStore(self.db)
@@ -124,29 +143,43 @@ class PeopleView(SectionView):
                 print(f"[PeopleView] PeopleStore attach failed on reload: {e}")
                 self.store = None
 
-        persons: List[Dict[str, Any]] = []
+        persons: List[Dict[str, Any]]
         if self.store:
-            # <-- CLAVE: usar sugerencias si aún no hay fotos confirmadas
-            persons = self.store.list_persons_with_suggestion_counts(
-                include_pets=True)
-
-        if not persons:
-            self.list.hide()
-            self.empty.show()
-            return
-
-        self.empty.hide()
-        self.list.show()
+            # Incluimos personas con 0 fotos para ver sugerencias
+            persons = self.store.list_persons_overview(include_zero=True)
+        else:
+            persons = self._clusters_mock
 
         for p in persons:
-            icon = QIcon(self._circle_pixmap(p.get("cover")))
-            title = (p.get("title") or "").strip() or "Agregar nombre"
-            photos = int(p.get("photos", 0)) if "photos" in p else 0
+            pid = int(p.get("id", 0))
+            cover = p.get("cover") or ""
+
+            # 🧽 Intento de “reparación” de portadas legadas
+            if self.store:
+                try:
+                    new_cover = self.store.refresh_avatar_if_legacy(
+                        pid, force=False)
+                    if new_cover and new_cover != cover:
+                        cover = new_cover
+                except Exception:
+                    pass
+
+            icon = QIcon(self._circular_pixmap(cover))
+            title = (p.get("title") or "").strip() or "Sin nombre"
+            photos = int(p.get("photos", 0))
             sugs = int(p.get("suggestions_count", 0))
-            second = f"{photos} foto{'s' if photos != 1 else ''}" if photos > 0 else f"{sugs} sugerencia{'s' if sugs != 1 else ''}"
-            it = QStandardItem(icon, f"{title}\n{second}")
+            text = f"{title}\n{self._count_label(photos, sugs)}"
+
+            it = QStandardItem(icon, text)
             it.setEditable(False)
-            it.setData(p, ROLE_DATA)
+            it.setData({
+                "id": pid,
+                "title": title,
+                "is_pet": bool(p.get("is_pet")),
+                "cover": cover,
+                "photos_count": photos,
+                "suggestions_count": sugs
+            }, ROLE_DATA)
             self.model.appendRow(it)
 
         fm = self.list.fontMetrics()
@@ -154,11 +187,10 @@ class PeopleView(SectionView):
         cell_h = 12 + TILE + 8 + two_lines + 8
         cell_w = 10 + TILE + 10
         self.list.setGridSize(QSize(cell_w, int(cell_h)))
-        # refresco suave
         QTimer.singleShot(
             0, lambda: self.list.setGridSize(self.list.gridSize()))
 
-    # ---------- Detail page ----------
+    # ──────────────────────── Detail page ────────────────────────
     def _build_detail_page(self) -> None:
         root = QVBoxLayout(self._page_detail)
         root.setContentsMargins(0, 0, 0, 0)
@@ -167,15 +199,12 @@ class PeopleView(SectionView):
         hdr = QHBoxLayout()
         hdr.setContentsMargins(0, 0, 0, 0)
         hdr.setSpacing(8)
-
         self.btn_back = QToolButton(self._page_detail)
         self.btn_back.setObjectName("ToolbarBtn")
         self.btn_back.setIcon(self.style().standardIcon(QStyle.SP_ArrowBack))
         self.btn_back.clicked.connect(self._on_back_clicked)
-
         lbl = QLabel("Sugerencias y elementos", self._page_detail)
         lbl.setObjectName("SectionText")
-
         hdr.addWidget(self.btn_back)
         hdr.addWidget(lbl, 1)
         root.addLayout(hdr)
@@ -218,8 +247,9 @@ class PeopleView(SectionView):
             w.deleteLater()
 
         if self.store:
-            detail = PersonDetailView(person_id=int(
-                pid), person_title=title, store=self.store, parent=self._page_detail)
+            detail = PersonDetailView(
+                person_id=int(pid), person_title=title, store=self.store, parent=self._page_detail
+            )
         else:
             detail = PersonDetailView(cluster=data, parent=self._page_detail)
 
@@ -234,7 +264,7 @@ class PeopleView(SectionView):
         self.detail_container.setCurrentWidget(detail)
         self.stack.setCurrentIndex(1)
 
-    # ---------- Menú contextual ----------
+    # ─────────────────────── Menú contextual ───────────────────────
     def _open_context_menu(self, pos: QPoint) -> None:
         idx = self.list.indexAt(pos)
         if not idx.isValid():
@@ -251,19 +281,34 @@ class PeopleView(SectionView):
         else:
             act_pet = menu.addAction("Marcar como mascota")
         menu.addSeparator()
+        act_fix = menu.addAction("Reparar portada (zoom rostro)")
+        menu.addSeparator()
         act_delete = menu.addAction("Eliminar")
 
-        act = menu.exec(self.list.viewport().mapToGlobal(pos))
+        global_pos = self.list.viewport().mapToGlobal(pos)
+        act = menu.exec(global_pos)
         if not act:
             return
+
         if act == act_rename:
             self._rename_person(idx)
         elif act == act_pet:
             self._toggle_pet(idx)
+        elif act == act_fix:
+            self._force_fix_cover(pid)
         elif act == act_delete:
             self._delete_person(idx)
 
-    # ---------- utilidades modelo ----------
+    def _force_fix_cover(self, pid: int) -> None:
+        if not self.store:
+            return
+        try:
+            self.store.refresh_avatar_if_legacy(int(pid), force=True)
+            self._refresh_person_icon(str(pid))
+        except Exception:
+            pass
+
+    # ─────────────────────── utilidades modelo ───────────────────────
     def _find_model_row_by_person_id(self, pid: str) -> int:
         for row in range(self.model.rowCount()):
             data = self.model.item(row).data(ROLE_DATA)
@@ -277,9 +322,10 @@ class PeopleView(SectionView):
             return
         it = self.model.item(row)
         data: Dict[str, Any] = it.data(ROLE_DATA)
-        title = (data.get("title") or "").strip() or "Agregar nombre"
+        photos = int(data.get("photos_count", 0))
         sugs = int(data.get("suggestions_count", 0))
-        it.setText(f"{title}\n{sugs} sugerencias")
+        title = (data.get("title") or "").strip() or "Sin nombre"
+        it.setText(f"{title}\n{self._count_label(photos, sugs)}")
 
     def _refresh_person_icon(self, pid: str) -> None:
         if self.store is None:
@@ -290,13 +336,13 @@ class PeopleView(SectionView):
         it = self.model.item(row)
         data: Dict[str, Any] = it.data(ROLE_DATA) or {}
         try:
-            persons = self.store.list_persons_with_suggestion_counts()
+            persons = self.store.list_persons_overview(include_zero=True)
             match = next((p for p in persons if str(
                 p.get("id")) == str(pid)), None)
         except Exception:
             match = None
         cover = (match or {}).get("cover") or data.get("cover") or ""
-        it.setIcon(QIcon(self._circle_pixmap(cover)))
+        it.setIcon(QIcon(self._circular_pixmap(cover)))
         data["cover"] = cover
         it.setData(data, ROLE_DATA)
 
@@ -307,9 +353,10 @@ class PeopleView(SectionView):
         it = self.model.item(row)
         data: Dict[str, Any] = it.data(ROLE_DATA)
         data["title"] = new_title
+        photos = int(data.get("photos_count", 0))
         sugs = int(data.get("suggestions_count", 0))
-        base = new_title.strip() or "Agregar nombre"
-        it.setText(f"{base}\n{sugs} sugerencias")
+        base = new_title.strip() or "Sin nombre"
+        it.setText(f"{base}\n{self._count_label(photos, sugs)}")
         it.setData(data, ROLE_DATA)
 
     def _rename_person(self, idx: QModelIndex) -> None:
@@ -317,7 +364,7 @@ class PeopleView(SectionView):
         data: Dict[str, Any] = it.data(ROLE_DATA) or {}
         old = (data.get("title") or "").strip()
         new, ok = QInputDialog.getText(
-            self, "Asignar nombre", "", text=old or "")
+            self, "Renombrar persona/mascota", "", text=old)
         if not ok:
             return
         title = new.strip()
@@ -327,9 +374,10 @@ class PeopleView(SectionView):
             except Exception:
                 pass
         data["title"] = title
+        photos = int(data.get("photos_count", 0))
         sugs = int(data.get("suggestions_count", 0))
-        base = title if title else "Agregar nombre"
-        it.setText(f"{base}\n{sugs} sugerencias")
+        base = title if title else "Sin nombre"
+        it.setText(f"{base}\n{self._count_label(photos, sugs)}")
         it.setData(data, ROLE_DATA)
 
     def _toggle_pet(self, idx: QModelIndex) -> None:
@@ -358,3 +406,17 @@ class PeopleView(SectionView):
         self.model.removeRow(idx.row())
         if self._current_person_id and str(pid) == str(self._current_person_id):
             self._go_back_to_list()
+
+    # ────────────────────────── Mock data ─────────────────────────
+    def _mock_clusters(self) -> list[Dict[str, Any]]:
+        out: list[Dict[str, Any]] = []
+        for i in range(1, 9):
+            out.append({
+                "id": i,
+                "title": f"Persona {i}",
+                "cover": "",
+                "is_pet": False,
+                "photos_count": 0,
+                "suggestions_count": 0,
+            })
+        return out

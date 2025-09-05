@@ -137,6 +137,72 @@ class PeopleStore:
         except Exception:
             return 64
 
+    def _is_legacy_cover(self, cover_path: Optional[str]) -> bool:
+        """
+        Devuelve True si la portada parece 'legada': inexistente, no-cuadrada,
+        o fuera de la carpeta de avatars del app.
+        """
+        if not cover_path:
+            return True
+        try:
+            p = Path(cover_path)
+            # si no está en …/avatars/ lo consideramos legado
+            if p.parent.name.lower() != "avatars":
+                return True
+            with Image.open(cover_path) as im:
+                w, h = im.size
+                if w != h or w == 0:
+                    return True
+        except Exception:
+            return True
+        return False
+
+    def _best_suggestion_face_id(self, person_id: int) -> Optional[int]:
+        cur = self._conn.cursor()
+        cur.execute("""
+            SELECT f.id
+            FROM face_suggestions fs
+            JOIN faces f ON f.id = fs.face_id
+            WHERE fs.person_id=? AND fs.state='pending' AND f.is_hidden=0
+            ORDER BY COALESCE(fs.score,0) DESC, f.ts DESC
+            LIMIT 1;
+        """, (person_id,))
+        row = cur.fetchone()
+        return int(row[0]) if row else None
+
+    def refresh_avatar_if_legacy(self, person_id: int, *, force: bool = False) -> Optional[str]:
+        """
+        Si la portada está ausente o parece 'legada', crea una portada nueva
+        recortando la mejor cara disponible (sugerencia o confirmada).
+        Si 'force' es True, siempre regenera.
+        Devuelve la ruta final usada, o None si no hubo cambios.
+        """
+        cur = self._conn.cursor()
+        cur.execute("SELECT cover_path FROM persons WHERE id=?", (person_id,))
+        row = cur.fetchone()
+        current = row[0] if row else None
+
+        if force:
+            cur.execute(
+                "UPDATE persons SET cover_path=NULL WHERE id=?", (person_id,))
+            self._conn.commit()
+            current = None
+
+        if not force and not self._is_legacy_cover(current):
+            return current  # ya está bien
+
+        # 1) preferimos mejor sugerencia
+        face_id = self._best_suggestion_face_id(person_id)
+        if face_id is not None:
+            path = self.make_avatar_from_face(
+                person_id, face_id, out_size=256, pad_ratio=0.25)
+            if path:
+                return path
+
+        # 2) si no hay sugerencias, usar cara confirmada de mejor calidad
+        path = self.generate_cover_for_person(person_id)
+        return path
+
     # ─────────────── Avatares (recorte de rostro) ───────────────
     def _avatar_out_path(self, person_id: int) -> str:
         out = app_data_dir() / "avatars" / f"person_{person_id}.jpg"
@@ -471,7 +537,7 @@ class PeopleStore:
         """, (face_id, person_id))
         self._conn.commit()
 
-        # ------------------------------------------------------------------ #
+    # ------------------------------------------------------------------ #
     # Escaneo incremental
     # ------------------------------------------------------------------ #
     def get_unscanned_media(self, *, batch: int = 48) -> List[Dict[str, Any]]:
@@ -501,4 +567,56 @@ class PeopleStore:
                 last_mtime=excluded.last_mtime,
                 last_ts=excluded.last_ts;
         """, (media_id, int(mtime), self._now()))
+        self._conn.commit()
+
+    # ───────────────────────── Suggestions ─────────────────────────
+    def add_suggestion(self, face_id: int, person_id: int, *, score: Optional[float] = None) -> None:
+        """
+        Crea/actualiza una sugerencia (estado = pending).
+        Si ya existía y estaba 'rejected', la vuelve a poner 'pending'.
+        """
+        cur = self._conn.cursor()
+        cur.execute("""
+            INSERT INTO face_suggestions(face_id, person_id, score, state)
+            VALUES (?, ?, ?, 'pending')
+            ON CONFLICT(face_id, person_id) DO UPDATE SET
+                score=COALESCE(excluded.score, face_suggestions.score),
+                state=CASE
+                        WHEN face_suggestions.state='rejected' THEN 'pending'
+                        ELSE face_suggestions.state
+                    END;
+        """, (face_id, person_id, score))
+        self._conn.commit()
+
+    def accept_suggestion(self, face_id: int, person_id: int) -> None:
+        """
+        Acepta una sugerencia: vincula la cara a la persona y limpia estados.
+        """
+        cur = self._conn.cursor()
+        cur.execute("""
+            INSERT INTO person_face(person_id, face_id)
+            VALUES (?, ?)
+            ON CONFLICT(face_id) DO UPDATE SET person_id=excluded.person_id;
+        """, (person_id, face_id))
+        cur.execute("""
+            UPDATE face_suggestions
+            SET state = CASE
+                            WHEN person_id=? THEN 'accepted'
+                            ELSE 'rejected'
+                        END
+            WHERE face_id=?;
+        """, (person_id, face_id))
+        self._conn.commit()
+        # asegurar portada si faltaba
+        try:
+            self.ensure_cover_if_missing(person_id)
+        except Exception:
+            pass
+
+    def reject_suggestion(self, face_id: int, person_id: int) -> None:
+        cur = self._conn.cursor()
+        cur.execute("""
+            UPDATE face_suggestions SET state='rejected'
+            WHERE face_id=? AND person_id=?;
+        """, (face_id, person_id))
         self._conn.commit()
