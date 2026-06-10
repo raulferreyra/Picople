@@ -148,7 +148,7 @@ python -m picople.app.main
 
 ## 🧰 Estructura
 
-```
+```bash
 src/picople/
   app/
     main.py, main_window.py, views/
@@ -195,47 +195,47 @@ Por definir (temporalmente **All rights reserved** hasta estabilizar).
 
 ## 🚩 Fixes
 
-**Ver estado (tablas y conteos)**
+- **Ver estado (tablas y conteos)**
 
-```
+```bash
 python -m picople.app.admin info
 ```
 
-**Purgar archivo de DB y crear uno vacío**
+- **Purgar archivo de DB y crear uno vacío**
 
-```
+```bash
 python -m picople.app.admin purge
 ```
 
-**Vaciar todo lo de Personas/Caras**
+- **Vaciar todo lo de Personas/Caras**
 
-```
+```bash
 python -m picople.app.admin wipe-people --vacuum
 ```
 
 Si quieres crear tablas desde cero para que se apliquen migraciones limpiecitas:
 
-```
+```bash
 python -m picople.app.admin wipe-people --drop --vacuum
 python -m picople.app.admin migrate
 ```
 
-**Vaciar una tabla concreta**
+- **Vaciar una tabla concreta**
 
-```
+```bash
 python -m picople.app.admin wipe-table face_suggestions --vacuum
 ```
 
 O eliminarla para que se recree al abrir la app:
 
-```
+```bash
 python -m picople.app.admin wipe-table face_suggestions --drop
 python -m picople.app.admin migrate
 ```
 
-**Vaciar/eliminar todas las tablas de usuario**
+- **Vaciar/eliminar todas las tablas de usuario**
 
-```
+```bash
 python -m picople.app.admin wipe-all --drop --vacuum
 python -m picople.app.admin migrate
 ```
