@@ -58,9 +58,9 @@ Organizar tu biblioteca **en tu equipo** (sin nube), con miniaturas rápidas, á
 
 ## 🚧 Próximos hitos (resumen)
 
-10. **Personas y Mascotas (on‑device)** – detección, embeddings, clustering, UI de confirmación/sugerencias.  
-11. **Cosas y Lugares** – etiquetas por objeto/escena + EXIF GPS/time clustering.  
-12. **Búsqueda avanzada** – facetas combinables (persona:cosa:lugar:fecha:álbum).  
+1. **Personas y Mascotas (on‑device)** – detección, embeddings, clustering, UI de confirmación/sugerencias.  
+2. **Cosas y Lugares** – etiquetas por objeto/escena + EXIF GPS/time clustering.  
+3. **Búsqueda avanzada** – facetas combinables (persona:cosa:lugar:fecha:álbum).  
 13–20. Calidad/dedup, exportación, watcher en segundo plano, rendimiento, seguridad, empaquetado, “Moments” de video…
 
 > Detalle completo de roadmap en el repositorio (sección “Hitos”).
