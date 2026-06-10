@@ -282,6 +282,7 @@ class PeopleView(SectionView):
             act_pet = menu.addAction("Marcar como mascota")
         menu.addSeparator()
         act_fix = menu.addAction("Reparar portada (zoom rostro)")
+        act_merge = menu.addAction("Combinar con…")
         menu.addSeparator()
         act_delete = menu.addAction("Eliminar")
 
@@ -296,6 +297,8 @@ class PeopleView(SectionView):
             self._toggle_pet(idx)
         elif act == act_fix:
             self._force_fix_cover(pid)
+        elif act == act_merge:
+            self._merge_person(idx)
         elif act == act_delete:
             self._delete_person(idx)
 
@@ -391,6 +394,49 @@ class PeopleView(SectionView):
                 pass
         data["is_pet"] = new_flag
         it.setData(data, ROLE_DATA)
+
+    def _merge_person(self, idx: QModelIndex) -> None:
+        if not self.store:
+            return
+        it = self.model.itemFromIndex(idx)
+        data: Dict[str, Any] = it.data(ROLE_DATA) or {}
+        source_id = data.get("id")
+        if source_id is None:
+            return
+
+        try:
+            persons = self.store.list_persons_overview(include_zero=True)
+        except Exception:
+            return
+
+        others = [
+            (int(p["id"]), (p.get("title") or "").strip() or "Sin nombre")
+            for p in persons if int(p["id"]) != int(source_id)
+        ]
+        if not others:
+            return
+
+        labels = [f"{name}" for _, name in others]
+        source_name = (data.get("title") or "Sin nombre").strip()
+        chosen, ok = QInputDialog.getItem(
+            self,
+            "Combinar personas",
+            f"Combinar '{source_name}' dentro de:",
+            labels, 0, False
+        )
+        if not ok or not chosen:
+            return
+
+        target_id = others[labels.index(chosen)][0]
+        try:
+            self.store.merge_persons(int(source_id), target_id)
+        except Exception as e:
+            print(f"[PeopleView] merge_persons falló: {e}")
+            return
+
+        self._reload_list()
+        if self._current_person_id and str(source_id) == str(self._current_person_id):
+            self._go_back_to_list()
 
     def _delete_person(self, idx: QModelIndex) -> None:
         it = self.model.itemFromIndex(idx)

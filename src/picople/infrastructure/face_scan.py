@@ -79,6 +79,10 @@ class FaceScanWorker(QObject):
             val = (val << 1) | int(bool(b))
         return f"{val:016x}"
 
+    # Área mínima de cara en imagen original (50×50 px).
+    # Por debajo es muy probable que sea un falso positivo.
+    _MIN_FACE_AREA = 50 * 50
+
     def _detect_faces(self, img_path: str) -> List[Tuple[int, int, int, int]]:
         if not self._detector:
             return []
@@ -90,43 +94,33 @@ class FaceScanWorker(QObject):
 
         h, w, _ = rgb.shape
 
-        # Si la imagen es pequeña, la ampliamos para que las caras superen minSize
         upscale = 1.0
         if max(h, w) < 800:
             upscale = 800.0 / float(max(h, w))
-            rgb = cv2.resize(rgb, (int(w*upscale), int(h*upscale)),
+            rgb = cv2.resize(rgb, (int(w * upscale), int(h * upscale)),
                              interpolation=cv2.INTER_CUBIC)
             h, w, _ = rgb.shape
 
         gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
 
-        # minSize dinámico (8% del lado corto, acotado)
-        min_side = int(max(16, min(80, 0.08 * min(h, w))))
+        # minSize: 10% del lado corto, entre 40 y 150 px en la imagen escalada.
+        # Valores más altos reducen drásticamente los falsos positivos.
+        min_side = int(max(40, min(150, 0.10 * min(h, w))))
 
-        # Probaremos varios settings y, si están disponibles, otro cascade
-        cascades = [self._detector]
-        try:
-            alt = cv2.CascadeClassifier(
-                getattr(cv2.data, "haarcascades", "") + "haarcascade_frontalface_alt2.xml")
-            if not alt.empty():
-                cascades.append(alt)
-        except Exception:
-            pass
-
-        for cas in cascades:
-            for (sf, mn, ms) in (
-                (1.05, 3, min_side),
-                (1.10, 3, max(16, int(min_side*0.8))),
-                (1.15, 2, max(16, int(min_side*0.6))),
-            ):
-                faces = cas.detectMultiScale(
-                    gray, scaleFactor=sf, minNeighbors=mn, minSize=(ms, ms))
-                if len(faces):
-                    # Deshacer el upscale si lo hubo
-                    if upscale != 1.0:
-                        inv = 1.0 / upscale
-                        return [(int(x*inv), int(y*inv), int(w*inv), int(h*inv)) for (x, y, w, h) in faces]
-                    return [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in faces]
+        # Dos pasadas conservadoras únicamente; minNeighbors bajo produce falsos positivos.
+        # Un solo cascade (default) es más preciso que combinar cascades.
+        inv = 1.0 / upscale if upscale != 1.0 else 1.0
+        for (sf, mn) in ((1.10, 5), (1.15, 4)):
+            faces = self._detector.detectMultiScale(
+                gray, scaleFactor=sf, minNeighbors=mn, minSize=(min_side, min_side))
+            if len(faces):
+                result = [
+                    (int(x * inv), int(y * inv), int(fw * inv), int(fh * inv))
+                    for (x, y, fw, fh) in faces
+                    if int(fw * inv) * int(fh * inv) >= self._MIN_FACE_AREA
+                ]
+                if result:
+                    return result
 
         return []
 
@@ -197,17 +191,13 @@ class FaceScanWorker(QObject):
 
             try:
                 boxes = self._detect_faces(detect_from)
-
-                # Fallback: si en el thumbnail no detecta nada, intenta en el original
-                if not boxes and thumb and Path(path).exists():
-                    log(
-                        f"FaceScanWorker.run: [{i}/{total}] 0 caras en thumb, probando original")
-                    boxes = self._detect_faces(path)
-
                 log(f"FaceScanWorker.run: [{i}/{total}] caras detectadas =", len(boxes))
 
                 for (x, y, w, h) in boxes:
                     q = float(w * h)
+                    if q < self._MIN_FACE_AREA:
+                        log(f"FaceScanWorker: cara ignorada ({w}x{h}px, area={q:.0f})")
+                        continue
 
                     face_id = self.store.add_face_by_media_id(
                         mid, (x, y, w, h), embedding=None, quality=q
