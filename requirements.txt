@@ -1,32 +1,19 @@
-annotated-types==0.7.0
-black==25.1.0
-click==8.2.1
-colorama==0.4.6
-imageio-ffmpeg==0.6.0
-iniconfig==2.1.0
-loguru==0.7.3
-mypy==1.17.1
-mypy_extensions==1.1.0
-numpy==2.2.6
-opencv-python==4.12.0.88
-packaging==25.0
-pathspec==0.12.1
--e git+https://github.com/raulferreyra/Picople.git@7d8253ce57f3bebb664b7f55fad86b618d3335a5#egg=picople
-pillow==11.3.0
-pillow_heif==1.1.0
-platformdirs==4.3.8
-pluggy==1.6.0
-pydantic==2.11.7
-pydantic_core==2.33.2
-Pygments==2.19.2
+# Runtime
 PySide6==6.9.1
 PySide6_Addons==6.9.1
 PySide6_Essentials==6.9.1
-pytest==8.4.1
-PyYAML==6.0.2
-ruff==0.12.9
 shiboken6==6.9.1
+pillow==11.3.0
+numpy==2.2.6
 sqlcipher3-wheels==0.5.5
-typing-inspection==0.4.1
-typing_extensions==4.14.1
-win32_setctime==1.2.0
+
+# Runtime opcional (con fallback en el código si no están)
+imageio-ffmpeg==0.6.0   # miniaturas y reproducción de video
+pillow_heif==1.1.0      # soporte HEIC/HEIF
+opencv-python==4.12.0.88  # detección de caras (FaceScanWorker)
+
+# Dev
+black==25.1.0
+mypy==1.17.1
+ruff==0.12.9
+pytest==8.4.1
