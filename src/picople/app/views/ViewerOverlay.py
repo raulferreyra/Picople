@@ -18,14 +18,15 @@ class ViewerOverlay(QWidget):
         self.panel = None
         self.hide()
 
-    def open(self, items: List[MediaItem], start_index: int = 0):
+    def open(self, items: List[MediaItem], start_index: int = 0, *, db=None):
         # limpia panel anterior
         if self.panel:
             self.panel.setParent(None)
             self.panel.deleteLater()
             self.panel = None
 
-        self.panel = MediaViewerPanel(items, start_index, parent=self)
+        self.panel = MediaViewerPanel(items, start_index, db=db, parent=self)
+        self.panel.requestClose.connect(self.hide)
         self.layout().addWidget(self.panel, 1)
 
         # cubrir el central widget del mainwindow

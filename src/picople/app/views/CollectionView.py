@@ -9,7 +9,6 @@ from PySide6.QtWidgets import (
 from picople.infrastructure.db import Database
 from picople.app.controllers import MediaListModel, MediaItem
 from picople.app.event_bus import bus
-from .MediaViewerPanel import MediaViewerPanel
 from .SectionView import SectionView
 from .ThumbDelegate import ThumbDelegate
 
@@ -191,12 +190,10 @@ class CollectionView(SectionView):
         ]
         start_idx = index.row()
         win = QApplication.activeWindow()
-        viewer = MediaViewerPanel(
-            items, start_idx, db=getattr(win, "_db", None), parent=win
-        )
-        # reemplaza central por visor
-        if hasattr(win, "_open_viewer_embedded_from"):
-            win._open_viewer_embedded_from(viewer)
+        if hasattr(win, "viewer_overlay"):
+            win.viewer_overlay.open(
+                items, start_idx, db=getattr(win, "_db", None)
+            )
 
     # -------- Favoritos en vivo -------- #
     def _on_fav_changed(self, path: str, fav: bool) -> None:
